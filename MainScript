@@ -368,19 +368,33 @@ end
 -- ---------- MONITOR LOOP (unchanged) ----------
 local function monitorBombers()
     while true do
-        local occupied = false
-        for _, obj in ipairs(workspace:GetChildren()) do
-            if obj.Name == BOMBER_PATH then
-                if tryOccupyBomber(obj) then
-                    occupied = true
-                    break
+        local success, err = pcall(function()
+            local occupied = false
+            for _, obj in ipairs(workspace:GetChildren()) do
+                if obj.Name == BOMBER_PATH then
+                    if tryOccupyBomber(obj) then
+                        occupied = true
+                        break
+                    end
                 end
             end
-        end
-        if occupied then
-            repeat task.wait(3) until not LocalPlayer.Character
-        else
-            task.wait(3)
+            if occupied then
+                print("[Gunner] Successfully seated – monitoring death")
+                -- Wait until our character disappears (respawn / death)
+                repeat
+                    task.wait(3)
+                    print("[Gunner] Still alive, waiting for death/respawn...")
+                until not LocalPlayer.Character
+                print("[Gunner] Character lost – restarting scan")
+            else
+                print("[Gunner] No free bomber found – retrying in 3s")
+                task.wait(3)
+            end
+        end)
+
+        if not success then
+            warn("[Gunner] monitorBombers error:", err)
+            task.wait(3)   -- don't spam if there's a persistent error
         end
     end
 end
