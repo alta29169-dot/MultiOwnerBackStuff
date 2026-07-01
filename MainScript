@@ -1,0 +1,375 @@
+-- ============================================================
+--  BackGunner Standalone  (Turret + RPG)  – Auto‑claim with owner whitelist
+-- ============================================================
+
+-- ---------- CONFIG ----------
+local ALLOWED_OWNERS = {           -- Pilots whose bombers we can use
+    "Dang_Lots",
+    "RandomicalRando",             -- add as many as you need
+}
+
+local BOMBER_PATH   = "Large Bomber"
+local SETUP_DELAY   = 8            -- seconds to wait after claiming
+
+local TURRET_BULLET_SPEED = 600
+local TURRET_ENEMY_SPEED  = 100
+local TURRET_MAX_RANGE    = 1400
+local TURRET_SHOOT_DURATION = 2
+local TURRET_SHOOT_BREAK    = 1
+
+local RPG_BULLET_SPEED = 225
+local RPG_MAX_RANGE    = 1800
+local RPG_COOLDOWN_MIN = 3
+local RPG_COOLDOWN_MAX = 5
+-- -----------------------------
+
+-- ---------- SERVICES ----------
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local Event = ReplicatedStorage:WaitForChild("Event")
+
+-- ---------- PREDICTION MATH ----------
+local function solveQuadratic(a, b, c)
+    local d = b*b - 4*a*c
+    if d < 0 then return nil end
+    local sqrtD = math.sqrt(d)
+    local t1 = (-b - sqrtD) / (2*a)
+    local t2 = (-b + sqrtD) / (2*a)
+    return (t1 > 0 and t1) or (t2 > 0 and t2) or nil
+end
+
+local function getAimPosition(gunPos, targetPos, targetVel, bulletSpeed)
+    local dp = targetPos - gunPos
+    local a = targetVel:Dot(targetVel) - bulletSpeed*bulletSpeed
+    local b = 2 * dp:Dot(targetVel)
+    local c = dp:Dot(dp)
+    local t = solveQuadratic(a, b, c)
+    if not t then return nil end
+    return targetPos + targetVel * t
+end
+
+-- ---------- OBJECTIVE SCANNING ----------
+local function scanObjectives()
+    local myTeam = LocalPlayer.Team and LocalPlayer.Team.Name or ""
+    local found = {}
+
+    local enemyDockName = (myTeam == "USA") and "JapanDock" or "USDock"
+    local enemyDock = workspace:FindFirstChild(enemyDockName)
+    if enemyDock then
+        local primary = enemyDock.PrimaryPart or enemyDock:FindFirstChildWhichIsA("BasePart")
+        if primary then
+            found.harbour_enemy = primary.Position
+        end
+    end
+
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj.Name == "Island" then
+            local primary = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+            if primary then
+                table.insert(found, {pos = primary.Position, name = obj.Name})
+            end
+        end
+    end
+
+    return found
+end
+
+local objectives = scanObjectives()
+workspace.ChildAdded:Connect(function(child)
+    if child.Name == "Island" then
+        task.wait(3)
+        objectives = scanObjectives()
+    end
+end)
+
+-- ---------- TARGETING (Turret) ----------
+local function getTurretTarget(gunPos)
+    local bestTarget = nil
+    local bestDist = TURRET_MAX_RANGE
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer then continue end
+        if not plr.Character then continue end
+        if plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then continue end
+
+        local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+        if not hrp then continue end
+
+        local dist = (hrp.Position - gunPos).Magnitude
+        if dist > TURRET_MAX_RANGE then continue end
+
+        local speed = hrp.AssemblyLinearVelocity.Magnitude
+        if math.abs(speed - TURRET_ENEMY_SPEED) > 20 then continue end
+
+        if dist < bestDist then
+            bestDist = dist
+            bestTarget = plr
+        end
+    end
+    return bestTarget
+end
+
+-- ---------- TARGETING (RPG – objectives first, then enemies) ----------
+local function getRPGTarget(gunPos)
+    local closestDist = RPG_MAX_RANGE
+    local bestPos = nil
+
+    -- 1. Enemy harbour
+    if objectives.harbour_enemy then
+        local d = (objectives.harbour_enemy - gunPos).Magnitude
+        if d < closestDist then
+            closestDist = d
+            bestPos = objectives.harbour_enemy
+        end
+    end
+
+    -- 2. Islands
+    for _, island in ipairs(objectives) do
+        local d = (island.pos - gunPos).Magnitude
+        if d < closestDist then
+            closestDist = d
+            bestPos = island.pos
+        end
+    end
+
+    -- 3. Fallback: nearest enemy player (any speed)
+    if not bestPos then
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr == LocalPlayer then continue end
+            if not plr.Character then continue end
+            if plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then continue end
+
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local d = (hrp.Position - gunPos).Magnitude
+                if d < closestDist then
+                    closestDist = d
+                    bestPos = hrp.Position
+                end
+            end
+        end
+    end
+
+    return bestPos
+end
+
+-- ---------- RPG FIRE CONTROL ----------
+local lastRPGFireTime = 0
+local rpgCooldown = RPG_COOLDOWN_MIN
+
+local function equipRPG()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return nil end
+
+    local alreadyEquipped = char:FindFirstChild("RPG")
+    if alreadyEquipped then return alreadyEquipped end
+
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return nil end
+    local tool = backpack:FindFirstChild("RPG")
+    if not tool then return nil end
+
+    hum:UnequipTools()
+    hum:EquipTool(tool)
+    return tool
+end
+
+local function tryFireRPG(gunPos)
+    local now = tick()
+    if now - lastRPGFireTime < rpgCooldown then return end
+
+    local targetPos = getRPGTarget(gunPos)
+    if not targetPos then return end
+
+    local tool = equipRPG()
+    if not tool then return end
+
+    Event:FireServer("fireRPG", { targetPos })
+    lastRPGFireTime = now
+    rpgCooldown = math.random(RPG_COOLDOWN_MIN * 1000, RPG_COOLDOWN_MAX * 1000) / 1000
+end
+
+-- ---------- TURRET FIRE CONTROL ----------
+local function aim(position)
+    Event:FireServer("aim", { Vector3.new(position.X, position.Y, position.Z) })
+end
+
+local function setShoot(state)
+    Event:FireServer("shoot", { state })
+end
+
+local function stopEngagement()
+    setShoot(false)
+end
+
+-- ---------- ENGAGEMENT LOOP ----------
+local function startEngagement(seat)
+    local shootTimer = 0
+    local shootState = false
+
+    local conn = RunService.Heartbeat:Connect(function(dt)
+        if not seat or not seat.Parent then
+            conn:Disconnect()
+            stopEngagement()
+            return
+        end
+
+        local gunPos = seat.Position
+
+        -- 1. RPG (objectives first)
+        tryFireRPG(gunPos)
+
+        -- 2. Turret logic
+        local target = getTurretTarget(gunPos)
+        if target and target.Character then
+            local targetHRP = target.Character:FindFirstChild("HumanoidRootPart")
+            if targetHRP then
+                local predicted = getAimPosition(gunPos, targetHRP.Position, targetHRP.AssemblyLinearVelocity, TURRET_BULLET_SPEED)
+                if predicted then
+                    aim(predicted)
+                end
+            end
+
+            shootTimer = shootTimer + dt
+            if not shootState then
+                if shootTimer >= TURRET_SHOOT_BREAK then
+                    shootTimer = 0
+                    shootState = true
+                    setShoot(true)
+                end
+            else
+                if shootTimer >= TURRET_SHOOT_DURATION then
+                    shootTimer = 0
+                    shootState = false
+                    setShoot(false)
+                end
+            end
+        else
+            if shootState then
+                shootState = false
+                setShoot(false)
+            end
+            shootTimer = 0
+        end
+    end)
+
+    seat.AncestryChanged:Connect(function()
+        if not seat.Parent then conn:Disconnect(); stopEngagement() end
+    end)
+end
+
+-- ---------- CLAIM SYSTEM (owner‑filtered) ----------
+local function isOwnerAllowed(bomber)
+    local ownerVal = bomber:FindFirstChild("Owner")
+    if not ownerVal then return false end
+    for _, allowed in ipairs(ALLOWED_OWNERS) do
+        if ownerVal.Value == allowed then
+            return true
+        end
+    end
+    return false
+end
+
+local function tryClaimBomber(bomber)
+    -- 1. Filter by allowed owners
+    if not isOwnerAllowed(bomber) then return false end
+
+    -- 2. Must have a turret seat
+    local seat = bomber:FindFirstChild("SBTurretSeat")
+    if not seat then return false end
+
+    -- 3. Claim slot
+    local gunnerSlot = bomber:FindFirstChild("GunnerSlot")
+    if not gunnerSlot then
+        gunnerSlot = Instance.new("StringValue")
+        gunnerSlot.Name = "GunnerSlot"
+        gunnerSlot.Parent = bomber
+        gunnerSlot.Value = ""
+    end
+
+    if gunnerSlot.Value ~= "" then
+        return false   -- already claimed
+    end
+
+    gunnerSlot.Value = LocalPlayer.Name
+    if gunnerSlot.Value ~= LocalPlayer.Name then
+        return false   -- race condition
+    end
+
+    print("[Gunner] Claimed bomber owned by:", ownerVal.Value)
+
+    -- 4. Wait setup delay, then teleport and engage
+    task.wait(SETUP_DELAY)
+    if not bomber.Parent then return false end
+
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local hrp = char:WaitForChild("HumanoidRootPart")
+    hrp.CFrame = seat.CFrame
+
+    startEngagement(seat)
+
+    -- Clear claim when we die or bomber is destroyed
+    local function clearClaim()
+        if gunnerSlot and gunnerSlot.Parent then
+            gunnerSlot.Value = ""
+        end
+        stopEngagement()
+    end
+
+    LocalPlayer.CharacterAdded:Connect(function()
+        clearClaim()
+    end)
+
+    bomber.AncestryChanged:Connect(function()
+        if not bomber.Parent then
+            clearClaim()
+        end
+    end)
+
+    return true
+end
+
+-- ---------- MONITOR LOOP ----------
+local function getCurrentBomber()
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj.Name == BOMBER_PATH then
+            local slot = obj:FindFirstChild("GunnerSlot")
+            if slot and slot.Value == LocalPlayer.Name then
+                return obj
+            end
+        end
+    end
+    return nil
+end
+
+local function monitorBombers()
+    while true do
+        local claimed = false
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if obj.Name == BOMBER_PATH then
+                local alreadyClaimed = false
+                local slot = obj:FindFirstChild("GunnerSlot")
+                if slot and slot.Value == LocalPlayer.Name then
+                    alreadyClaimed = true
+                end
+                if not alreadyClaimed then
+                    if tryClaimBomber(obj) then
+                        claimed = true
+                        break
+                    end
+                end
+            end
+        end
+        if not claimed then
+            task.wait(3)
+        else
+            repeat task.wait(5) until not getCurrentBomber()
+        end
+    end
+end
+
+task.spawn(monitorBombers)
