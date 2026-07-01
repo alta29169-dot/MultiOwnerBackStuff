@@ -271,8 +271,7 @@ local function startEngagement(seat)
     end)
 end
 
--- ---------- CLAIM & MONITOR (physical‑occupancy based) ----------
-local CLAIM_CHECK_DIST = 50   -- studs – if another player is this close, we give up
+-- ---------- CLAIM & MONITOR (seat‑occupancy based) ----------
 
 local function isOwnerAllowed(bomber)
     local ownerVal = bomber:FindFirstChild("Owner")
@@ -304,21 +303,6 @@ local function isOwnerAllowed(bomber)
     return false
 end
 
--- Returns true if another player (not us) is too close to the seat
-local function isSeatOccupied(seat)
-    local seatPos = seat.Position
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr == LocalPlayer then continue end
-        local char = plr.Character
-        if not char then continue end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp and (hrp.Position - seatPos).Magnitude < CLAIM_CHECK_DIST then
-            return true
-        end
-    end
-    return false
-end
-
 local function tryOccupyBomber(bomber)
     -- 1. Check allowed owners
     if not isOwnerAllowed(bomber) then return false end
@@ -331,17 +315,20 @@ local function tryOccupyBomber(bomber)
     task.wait(SETUP_DELAY)
     if not bomber.Parent then return false end
 
-    -- 4. Check if another gunner is already near the seat (pre‑teleport)
-    if isSeatOccupied(seat) then
-        return false   -- skip this bomber
+    -- 4. If someone is already sitting in the turret, skip this bomber
+    if seat.Occupant then
+        return false
     end
 
-    -- 5. Teleport and engage immediately – we are the only one there
+    -- 5. Teleport to the seat and sit down
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:WaitForChild("HumanoidRootPart")
-    hrp.CFrame = seat.CFrame
-    print("[Gunner] Turret claimed successfully.")
+    local hum = char:WaitForChild("Humanoid")
+    hrp.CFrame = seat.CFrame + Vector3.new(0, 2, 0)   -- slight lift to sit properly
+    task.wait(0.2)
+    seat:Sit(hum)
 
+    print("[Gunner] Turret claimed successfully.")
     startEngagement(seat)
 
     -- Release when we die
@@ -357,6 +344,7 @@ local function tryOccupyBomber(bomber)
     return true
 end
 
+-- ---------- MONITOR LOOP (unchanged) ----------
 local function monitorBombers()
     while true do
         local occupied = false
@@ -369,11 +357,9 @@ local function monitorBombers()
             end
         end
         if occupied then
-            -- We are in a turret; we will stop monitoring when we die/reset
             repeat task.wait(3) until not LocalPlayer.Character
-            -- Character lost → respawn, loop continues
         else
-            task.wait(3)   -- no free bomber found yet
+            task.wait(3)
         end
     end
 end
