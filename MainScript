@@ -279,6 +279,7 @@ local function isOwnerAllowed(bomber)
     local ownerVal = bomber:FindFirstChild("Owner")
     if not ownerVal then return false end
 
+    -- 1. Check owner name
     local ownerName = ownerVal.Value
     local ownerAllowed = false
     for _, allowed in ipairs(ALLOWED_OWNERS) do
@@ -289,20 +290,18 @@ local function isOwnerAllowed(bomber)
     end
     if not ownerAllowed then return false end
 
+    -- 2. Team check – always use the pilot's current team
     local myTeam = LocalPlayer.Team and LocalPlayer.Team.Name or ""
-    if myTeam == "" then return true end
-
-    local bomberTeamVal = bomber:FindFirstChild("Team")
-    if bomberTeamVal and bomberTeamVal:IsA("StringValue") then
-        return bomberTeamVal.Value == myTeam
-    end
+    if myTeam == "" then return true end   -- gunner not on a team yet, allow for now
 
     local pilot = Players:FindFirstChild(ownerName)
-    if pilot and pilot.Team then
-        return pilot.Team.Name == myTeam
+    if not pilot then
+        -- Pilot is not in the game → can't verify team, deny
+        return false
     end
 
-    return false
+    local pilotTeam = pilot.Team and pilot.Team.Name or ""
+    return pilotTeam == myTeam
 end
 
 local function tryOccupyBomber(bomber)
