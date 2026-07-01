@@ -9,6 +9,7 @@ local ALLOWED_OWNERS = {           -- Pilots whose bombers we can use
     "PhiIDev", 
     "xe91pe",
     "ttt4fg2",
+    "Andromodath",
 }
 
 local BOMBER_PATH   = "Large Bomber"
