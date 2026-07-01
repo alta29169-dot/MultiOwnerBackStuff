@@ -300,6 +300,7 @@ local function tryClaimBomber(bomber)
         return false   -- race condition
     end
 
+    local ownerVal = bomber:FindFirstChild("Owner")
     print("[Gunner] Claimed bomber owned by:", ownerVal.Value)
 
     -- 4. Wait setup delay, then teleport and engage
