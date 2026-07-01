@@ -17,7 +17,7 @@ local SETUP_DELAY   = 8            -- seconds to wait after claiming
 
 local TURRET_BULLET_SPEED = 600
 local TURRET_ENEMY_SPEED  = 100
-local TURRET_MAX_RANGE    = 1800
+local TURRET_MAX_RANGE    = 1900
 local TURRET_SHOOT_DURATION = 3
 local TURRET_SHOOT_BREAK    = 0.75
 local RPG_OBJECTIVE_SPREAD = 25   -- studs of random offset for islands / harbour
