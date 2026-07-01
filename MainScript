@@ -271,12 +271,13 @@ local function startEngagement(seat)
     end)
 end
 
--- ---------- CLAIM SYSTEM (owner‑filtered) ----------
+-- ---------- CLAIM & MONITOR (physical‑occupancy based) ----------
+local CLAIM_CHECK_DIST = 10   -- studs – if another player is this close, we give up
+
 local function isOwnerAllowed(bomber)
     local ownerVal = bomber:FindFirstChild("Owner")
     if not ownerVal then return false end
 
-    -- 1. Check owner name
     local ownerName = ownerVal.Value
     local ownerAllowed = false
     for _, allowed in ipairs(ALLOWED_OWNERS) do
@@ -287,121 +288,96 @@ local function isOwnerAllowed(bomber)
     end
     if not ownerAllowed then return false end
 
-    -- 2. Check team match
     local myTeam = LocalPlayer.Team and LocalPlayer.Team.Name or ""
-    if myTeam == "" then return true end   -- no team assigned yet, allow (will fix itself)
+    if myTeam == "" then return true end
 
-    -- Prefer the bomber's own Team StringValue
     local bomberTeamVal = bomber:FindFirstChild("Team")
     if bomberTeamVal and bomberTeamVal:IsA("StringValue") then
         return bomberTeamVal.Value == myTeam
     end
 
-    -- Fallback: find the pilot player and compare their team
     local pilot = Players:FindFirstChild(ownerName)
     if pilot and pilot.Team then
         return pilot.Team.Name == myTeam
     end
 
-    -- If we can't determine the pilot's team, deny to be safe
     return false
 end
 
-local function tryClaimBomber(bomber)
-    -- 1. Filter by allowed owners
+-- Returns true if another player (not us) is too close to the seat
+local function isSeatOccupied(seat)
+    local seatPos = seat.Position
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer then continue end
+        local char = plr.Character
+        if not char then continue end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp and (hrp.Position - seatPos).Magnitude < CLAIM_CHECK_DIST then
+            return true
+        end
+    end
+    return false
+end
+
+local function tryOccupyBomber(bomber)
+    -- 1. Check allowed owners
     if not isOwnerAllowed(bomber) then return false end
 
     -- 2. Must have a turret seat
     local seat = bomber:FindFirstChild("SBTurretSeat")
     if not seat then return false end
 
-    -- 3. Claim slot
-    local gunnerSlot = bomber:FindFirstChild("GunnerSlot")
-    if not gunnerSlot then
-        gunnerSlot = Instance.new("StringValue")
-        gunnerSlot.Name = "GunnerSlot"
-        gunnerSlot.Parent = bomber
-        gunnerSlot.Value = ""
-    end
-
-    if gunnerSlot.Value ~= "" then
-        return false   -- already claimed
-    end
-
-    gunnerSlot.Value = LocalPlayer.Name
-    if gunnerSlot.Value ~= LocalPlayer.Name then
-        return false   -- race condition
-    end
-
-    local ownerVal = bomber:FindFirstChild("Owner")
-    print("[Gunner] Claimed bomber owned by:", ownerVal.Value)
-
-    -- 4. Wait setup delay, then teleport and engage
+    -- 3. Wait the setup delay (allows other alts to arrive first if they were faster)
     task.wait(SETUP_DELAY)
     if not bomber.Parent then return false end
 
+    -- 4. Teleport to the seat
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:WaitForChild("HumanoidRootPart")
     hrp.CFrame = seat.CFrame
 
-    startEngagement(seat)
-
-    -- Clear claim when we die or bomber is destroyed
-    local function clearClaim()
-        if gunnerSlot and gunnerSlot.Parent then
-            gunnerSlot.Value = ""
-        end
+    -- 5. Brief pause so the character settles, then check for other players
+    task.wait(0.3)
+    if isSeatOccupied(seat) then
+        -- Another gunner is already here – we lose
+        print("[Gunner] Seat occupied by another player – looking for another bomber...")
         stopEngagement()
+        return false
     end
 
+    print("[Gunner] Turret claimed successfully.")
+    startEngagement(seat)
+
+    -- Release when we die (character respawns)
     LocalPlayer.CharacterAdded:Connect(function()
-        clearClaim()
+        stopEngagement()
     end)
 
+    -- Release if the bomber or seat disappears
     bomber.AncestryChanged:Connect(function()
-        if not bomber.Parent then
-            clearClaim()
-        end
+        if not bomber.Parent then stopEngagement() end
     end)
 
     return true
 end
 
--- ---------- MONITOR LOOP ----------
-local function getCurrentBomber()
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if obj.Name == BOMBER_PATH then
-            local slot = obj:FindFirstChild("GunnerSlot")
-            if slot and slot.Value == LocalPlayer.Name then
-                return obj
-            end
-        end
-    end
-    return nil
-end
-
 local function monitorBombers()
     while true do
-        local claimed = false
+        local occupied = false
         for _, obj in ipairs(workspace:GetChildren()) do
             if obj.Name == BOMBER_PATH then
-                local alreadyClaimed = false
-                local slot = obj:FindFirstChild("GunnerSlot")
-                if slot and slot.Value == LocalPlayer.Name then
-                    alreadyClaimed = true
-                end
-                if not alreadyClaimed then
-                    if tryClaimBomber(obj) then
-                        claimed = true
-                        break
-                    end
+                if tryOccupyBomber(obj) then
+                    occupied = true
+                    break
                 end
             end
         end
-        if not claimed then
-            task.wait(3)
+        if occupied then
+            -- We are in a turret; we will stop monitoring when we die/reset
+            repeat task.wait(3) until not LocalPlayer.Character
+            -- Character lost → respawn, loop continues
         else
-            repeat task.wait(5) until not getCurrentBomber()
+            task.wait(3)   -- no free bomber found yet
         end
     end
 end
