@@ -274,11 +274,35 @@ end
 local function isOwnerAllowed(bomber)
     local ownerVal = bomber:FindFirstChild("Owner")
     if not ownerVal then return false end
+
+    -- 1. Check owner name
+    local ownerName = ownerVal.Value
+    local ownerAllowed = false
     for _, allowed in ipairs(ALLOWED_OWNERS) do
-        if ownerVal.Value == allowed then
-            return true
+        if ownerName == allowed then
+            ownerAllowed = true
+            break
         end
     end
+    if not ownerAllowed then return false end
+
+    -- 2. Check team match
+    local myTeam = LocalPlayer.Team and LocalPlayer.Team.Name or ""
+    if myTeam == "" then return true end   -- no team assigned yet, allow (will fix itself)
+
+    -- Prefer the bomber's own Team StringValue
+    local bomberTeamVal = bomber:FindFirstChild("Team")
+    if bomberTeamVal and bomberTeamVal:IsA("StringValue") then
+        return bomberTeamVal.Value == myTeam
+    end
+
+    -- Fallback: find the pilot player and compare their team
+    local pilot = Players:FindFirstChild(ownerName)
+    if pilot and pilot.Team then
+        return pilot.Team.Name == myTeam
+    end
+
+    -- If we can't determine the pilot's team, deny to be safe
     return false
 end
 
