@@ -1,5 +1,5 @@
 -- ============================================================
---  BackGunner Standalone  (Turret + RPG)  – Auto‑claim with owner whitelist
+--  BackGunner Standalone  (Turret + RPG)  – Auto‑claim with owner whitelist [Test]
 -- ============================================================
 
 -- ---------- CONFIG ----------
@@ -277,9 +277,11 @@ end
 
 local function isOwnerAllowed(bomber)
     local ownerVal = bomber:FindFirstChild("Owner")
-    if not ownerVal then return false end
+    if not ownerVal then
+        print("[Gunner] No Owner value in bomber")
+        return false
+    end
 
-    -- 1. Check owner name
     local ownerName = ownerVal.Value
     local ownerAllowed = false
     for _, allowed in ipairs(ALLOWED_OWNERS) do
@@ -288,56 +290,74 @@ local function isOwnerAllowed(bomber)
             break
         end
     end
-    if not ownerAllowed then return false end
+    if not ownerAllowed then
+        print("[Gunner] Owner", ownerName, "not in ALLOWED_OWNERS")
+        return false
+    end
 
-    -- 2. Team check – always use the pilot's current team
     local myTeam = LocalPlayer.Team and LocalPlayer.Team.Name or ""
-    if myTeam == "" then return true end   -- gunner not on a team yet, allow for now
+    print("[Gunner] My team:", myTeam)
+
+    if myTeam == "" then
+        print("[Gunner] Gunner has no team yet – allowing")
+        return true
+    end
 
     local pilot = Players:FindFirstChild(ownerName)
     if not pilot then
-        -- Pilot is not in the game → can't verify team, deny
+        print("[Gunner] Pilot", ownerName, "not found in Players")
         return false
     end
 
     local pilotTeam = pilot.Team and pilot.Team.Name or ""
-    return pilotTeam == myTeam
+    print("[Gunner] Pilot", ownerName, "is on team:", pilotTeam)
+    local result = (pilotTeam == myTeam)
+    print("[Gunner] Team match:", result)
+    return result
 end
 
 local function tryOccupyBomber(bomber)
     -- 1. Check allowed owners
-    if not isOwnerAllowed(bomber) then return false end
-
-    -- 2. Must have a turret seat
-    local seat = bomber:FindFirstChild("SBTurretSeat")
-    if not seat then return false end
-
-    -- 3. Wait the setup delay (spreads out arrival times)
-    task.wait(SETUP_DELAY)
-    if not bomber.Parent then return false end
-
-    -- 4. If someone is already sitting in the turret, skip this bomber
-    if seat.Occupant then
+    if not isOwnerAllowed(bomber) then
+        print("[Gunner] isOwnerAllowed returned false – skipping bomber")
         return false
     end
 
-    -- 5. Teleport to the seat and sit down
+    -- 2. Must have a turret seat
+    local seat = bomber:FindFirstChild("SBTurretSeat")
+    if not seat then
+        print("[Gunner] No SBTurretSeat in bomber")
+        return false
+    end
+
+    -- 3. Wait the setup delay
+    task.wait(SETUP_DELAY)
+    if not bomber.Parent then
+        print("[Gunner] Bomber destroyed during wait")
+        return false
+    end
+
+    -- 4. Check Occupant
+    if seat.Occupant then
+        print("[Gunner] Seat already occupied by:", seat.Occupant.Parent and seat.Occupant.Parent.Name or "?")
+        return false
+    end
+
+    -- 5. Teleport & sit
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:WaitForChild("HumanoidRootPart")
     local hum = char:WaitForChild("Humanoid")
-    hrp.CFrame = seat.CFrame + Vector3.new(0, 2, 0)   -- slight lift to sit properly
+    hrp.CFrame = seat.CFrame + Vector3.new(0, 2, 0)
     task.wait(0.2)
     seat:Sit(hum)
+    print("[Gunner] Successfully seated in turret")
 
-    print("[Gunner] Turret claimed successfully.")
     startEngagement(seat)
 
-    -- Release when we die
     LocalPlayer.CharacterAdded:Connect(function()
         stopEngagement()
     end)
 
-    -- Release if the bomber disappears
     bomber.AncestryChanged:Connect(function()
         if not bomber.Parent then stopEngagement() end
     end)
