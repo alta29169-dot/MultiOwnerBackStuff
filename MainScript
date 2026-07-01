@@ -5,7 +5,8 @@
 -- ---------- CONFIG ----------
 local ALLOWED_OWNERS = {           -- Pilots whose bombers we can use
     "Dang_Lots",
-    "RandomicalRando",             -- add as many as you need
+    "RandomicalRando",
+    "PhiIDev", -- add as many as you need
 }
 
 local BOMBER_PATH   = "Large Bomber"
