@@ -272,7 +272,7 @@ local function startEngagement(seat)
 end
 
 -- ---------- CLAIM & MONITOR (physical‑occupancy based) ----------
-local CLAIM_CHECK_DIST = 10   -- studs – if another player is this close, we give up
+local CLAIM_CHECK_DIST = 50   -- studs – if another player is this close, we give up
 
 local function isOwnerAllowed(bomber)
     local ownerVal = bomber:FindFirstChild("Owner")
