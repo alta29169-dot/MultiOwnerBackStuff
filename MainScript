@@ -327,33 +327,29 @@ local function tryOccupyBomber(bomber)
     local seat = bomber:FindFirstChild("SBTurretSeat")
     if not seat then return false end
 
-    -- 3. Wait the setup delay (allows other alts to arrive first if they were faster)
+    -- 3. Wait the setup delay (spreads out arrival times)
     task.wait(SETUP_DELAY)
     if not bomber.Parent then return false end
 
-    -- 4. Teleport to the seat
+    -- 4. Check if another gunner is already near the seat (pre‑teleport)
+    if isSeatOccupied(seat) then
+        return false   -- skip this bomber
+    end
+
+    -- 5. Teleport and engage immediately – we are the only one there
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:WaitForChild("HumanoidRootPart")
     hrp.CFrame = seat.CFrame
-
-    -- 5. Brief pause so the character settles, then check for other players
-    task.wait(0.3)
-    if isSeatOccupied(seat) then
-        -- Another gunner is already here – we lose
-        print("[Gunner] Seat occupied by another player – looking for another bomber...")
-        stopEngagement()
-        return false
-    end
-
     print("[Gunner] Turret claimed successfully.")
+
     startEngagement(seat)
 
-    -- Release when we die (character respawns)
+    -- Release when we die
     LocalPlayer.CharacterAdded:Connect(function()
         stopEngagement()
     end)
 
-    -- Release if the bomber or seat disappears
+    -- Release if the bomber disappears
     bomber.AncestryChanged:Connect(function()
         if not bomber.Parent then stopEngagement() end
     end)
