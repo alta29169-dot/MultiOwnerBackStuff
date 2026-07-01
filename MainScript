@@ -1,5 +1,5 @@
 -- ============================================================
---  BackGunner Standalone  (Turret + RPG)  – Auto‑claim with owner whitelist [Test]
+--  BackGunner Standalone  (Turret + RPG)  – Auto‑claim with owner whitelist [Test 2]
 -- ============================================================
 
 -- ---------- CONFIG ----------
@@ -33,6 +33,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local Event = ReplicatedStorage:WaitForChild("Event")
+local g_isEngaged = false
 
 -- ---------- PREDICTION MATH ----------
 local function solveQuadratic(a, b, c)
@@ -214,11 +215,13 @@ local function setShoot(state)
 end
 
 local function stopEngagement()
+    g_isEngaged = false
     setShoot(false)
 end
 
 -- ---------- ENGAGEMENT LOOP ----------
 local function startEngagement(seat)
+    g_isEngaged = true
     local shootTimer = 0
     local shootState = false
 
@@ -351,6 +354,7 @@ local function tryOccupyBomber(bomber)
     task.wait(0.2)
     seat:Sit(hum)
     print("[Gunner] Successfully seated in turret")
+    g_isEngaged = true
 
     startEngagement(seat)
 
@@ -379,13 +383,15 @@ local function monitorBombers()
                 end
             end
             if occupied then
-                print("[Gunner] Successfully seated – monitoring death")
-                -- Wait until our character disappears (respawn / death)
-                repeat
+                print("[Gunner] Successfully seated – monitoring death / bomber")
+                -- Wait until we lose character OR engagement ends (bomber destroyed)
+                while LocalPlayer.Character and g_isEngaged do
                     task.wait(3)
-                    print("[Gunner] Still alive, waiting for death/respawn...")
-                until not LocalPlayer.Character
-                print("[Gunner] Character lost – restarting scan")
+                    print("[Gunner] Still engaged...")
+                end
+                print("[Gunner] Engagement ended or character lost – restarting scan")
+                g_isEngaged = false
+                stopEngagement()   -- ensure everything is clean
             else
                 print("[Gunner] No free bomber found – retrying in 3s")
                 task.wait(3)
