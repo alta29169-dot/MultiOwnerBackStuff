@@ -1,1 +1,4 @@
 # MultiOwnerBackStuff
+
+``` bash
+loadstring(game:HttpGet("https://raw.githubusercontent.com/alta29169-dot/MultiOwnerBackStuff/main/MainScript"))()
