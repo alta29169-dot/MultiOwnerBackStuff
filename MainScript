@@ -16,6 +16,7 @@ local TURRET_ENEMY_SPEED  = 100
 local TURRET_MAX_RANGE    = 1400
 local TURRET_SHOOT_DURATION = 2
 local TURRET_SHOOT_BREAK    = 1
+local RPG_OBJECTIVE_SPREAD = 25   -- studs of random offset for islands / harbour
 
 local RPG_BULLET_SPEED = 225
 local RPG_MAX_RANGE    = 1800
@@ -116,12 +117,19 @@ local function getRPGTarget(gunPos)
     local closestDist = RPG_MAX_RANGE
     local bestPos = nil
 
+    -- helper to add spread
+    local function addSpread(pos)
+        local angle = math.random() * math.pi * 2
+        local dist = math.random() * RPG_OBJECTIVE_SPREAD
+        return pos + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
+    end
+
     -- 1. Enemy harbour
     if objectives.harbour_enemy then
         local d = (objectives.harbour_enemy - gunPos).Magnitude
         if d < closestDist then
             closestDist = d
-            bestPos = objectives.harbour_enemy
+            bestPos = addSpread(objectives.harbour_enemy)
         end
     end
 
@@ -130,11 +138,11 @@ local function getRPGTarget(gunPos)
         local d = (island.pos - gunPos).Magnitude
         if d < closestDist then
             closestDist = d
-            bestPos = island.pos
+            bestPos = addSpread(island.pos)
         end
     end
 
-    -- 3. Fallback: nearest enemy player (any speed)
+    -- 3. Fallback: nearest enemy player (any speed) – no spread, direct fire
     if not bestPos then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr == LocalPlayer then continue end
