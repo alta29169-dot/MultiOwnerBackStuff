@@ -4,9 +4,7 @@
 
 -- ---------- CONFIG ----------
 local ALLOWED_OWNERS = {           -- Pilots whose bombers we can use
-    "Dang_Lots",
     "RandomicalRando",
-    "PhiIDev", 
     "xe91pe",
     "ttt4fg2",
     "Andromodath",
