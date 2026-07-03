@@ -1,0 +1,79 @@
+-- Standalone script: creates ButtonGui to test Network.walkAndChangeTeam
+
+-- 1. Define local player (client-side)
+local player = game.Players.LocalPlayer
+
+-- 2. Define the Network table and the provided function
+local Network = {}
+
+function Network.walkAndChangeTeam(requestedTeam, onComplete)
+    local character = player.Character or player.CharacterAdded:Wait()
+    local humanoid  = character:WaitForChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return end
+
+    local lobby      = workspace:WaitForChild("Lobby", 10)
+    if not lobby then warn("[Network] Lobby not found"); return end
+    local teamChange = lobby:WaitForChild("TeamChange", 5)
+    local teleporter = lobby:WaitForChild("Teleporter", 5)
+    if not teamChange or not teleporter then return end
+
+    local targetPart
+    if requestedTeam == "USA" then
+        targetPart = teamChange:WaitForChild("ToUSA", 5)
+    else
+        targetPart = teamChange:WaitForChild("ToJapan", 5)
+    end
+    if not targetPart then return end
+
+    humanoid:MoveTo(targetPart.Position)
+    humanoid.MoveToFinished:Wait()
+    task.wait(1.5)
+
+    character = player.Character or player.CharacterAdded:Wait()
+    humanoid  = character:WaitForChild("Humanoid")
+    humanoid:MoveTo(teleporter.Position)
+    humanoid.MoveToFinished:Wait()
+    task.wait(2)
+
+    if onComplete then onComplete() end
+end
+
+-- 3. Create the testing GUI
+local gui = Instance.new("ScreenGui")
+gui.Name = "TeamChangeTest"
+gui.ResetOnSpawn = false
+gui.Parent = game:GetService("CoreGui")  -- or player.PlayerGui if preferred
+
+-- Helper to create a button
+local function createButton(text, position, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 200, 0, 50)
+    btn.Position = position
+    btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.Text = text
+    btn.Font = Enum.Font.SourceSansBold
+    btn.TextSize = 20
+    btn.Parent = gui
+
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+-- USA button
+createButton("Join USA", UDim2.new(0.5, -100, 0.4, 0), function()
+    print("Testing walkAndChangeTeam -> USA")
+    Network.walkAndChangeTeam("USA", function()
+        print("USA team change sequence completed!")
+    end)
+end)
+
+-- Japan button
+createButton("Join Japan", UDim2.new(0.5, -100, 0.55, 0), function()
+    print("Testing walkAndChangeTeam -> Japan")
+    Network.walkAndChangeTeam("Japan", function()
+        print("Japan team change sequence completed!")
+    end)
+end)
+
+print("[Test GUI] Loaded. Press a button to trigger the team change sequence.")
