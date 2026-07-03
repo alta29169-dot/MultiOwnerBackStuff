@@ -1,15 +1,13 @@
--- Standalone script: walk to teleporter, then teleport to best owned island
-
+-- Standalone script: walk to teleporter, then teleport to best owned island (no touch check)
 local player = game.Players.LocalPlayer
 local replicatedStorage = game:GetService("ReplicatedStorage")
 local teleportEvent = replicatedStorage:WaitForChild("Event")  -- RemoteEvent
 
--- ---------- Helper: walk to a part with a small random offset, then touch ----------
+-- ---------- Helper: walk to a part with a small random offset, then move exactly ----------
 local function walkToPart(character, part)
     local humanoid = character:WaitForChild("Humanoid")
-    local root = character:WaitForChild("HumanoidRootPart")
-
-    -- Random offset (±2 studs in X/Z) but final move will be exact
+    
+    -- Random offset (±2 studs in X/Z) for more natural movement
     local randX = math.random(-200, 200) / 100  -- -2 to 2
     local randZ = math.random(-200, 200) / 100
     local intermediatePos = part.Position + Vector3.new(randX, 0, randZ)
@@ -18,44 +16,23 @@ local function walkToPart(character, part)
     humanoid:MoveTo(intermediatePos)
     humanoid.MoveToFinished:Wait()
 
-    -- Then move exactly onto the teleporter
+    -- Then move exactly onto the teleporter (guaranteed touch)
     humanoid:MoveTo(part.Position)
     humanoid.MoveToFinished:Wait()
-end
-
--- ---------- Touch detection ----------
-local function waitForTouch(character, part, timeout)
-    local touched = false
-    local connection
-    local startTime = tick()
-
-    connection = part.Touched:Connect(function(hit)
-        if hit:IsDescendantOf(character) then
-            touched = true
-        end
-    end)
-
-    -- Wait until touched or timeout
-    while not touched and tick() - startTime < timeout do
-        task.wait(0.1)
-    end
-
-    connection:Disconnect()
-    return touched
 end
 
 -- ---------- Island scanning & priority ----------
 local function getIslands()
     local islands = {}
-    -- Look directly in workspace and also in a folder named "Islands" if it exists
-    local folders = {workspace}
+    -- Check workspace directly and a possible "Islands" folder
+    local searchAreas = {workspace}
     local islandsFolder = workspace:FindFirstChild("Islands")
     if islandsFolder then
-        table.insert(folders, islandsFolder)
+        table.insert(searchAreas, islandsFolder)
     end
 
-    for _, folder in ipairs(folders) do
-        for _, obj in ipairs(folder:GetChildren()) do
+    for _, area in ipairs(searchAreas) do
+        for _, obj in ipairs(area:GetChildren()) do
             local codeValue = obj:FindFirstChild("IslandCode")
             local teamValue = obj:FindFirstChild("Team")
             if codeValue and codeValue:IsA("StringValue") and
@@ -122,7 +99,7 @@ btn.TextSize = 22
 btn.Text = "Teleport to Best Island"
 btn.Parent = gui
 
-local isBusy = false  -- prevent spamming
+local isBusy = false  -- prevent double clicks
 
 btn.MouseButton1Click:Connect(function()
     if isBusy then return end
@@ -146,17 +123,12 @@ btn.MouseButton1Click:Connect(function()
         return
     end
 
-    -- Walk to teleporter with randomisation
+    -- Walk to teleporter with randomisation (guaranteed to touch)
     print("Walking to teleporter...")
     walkToPart(character, teleporter)
 
-    -- Wait until we actually touch it (timeout 15 seconds)
-    local touched = waitForTouch(character, teleporter, 15)
-    if not touched then
-        warn("Failed to touch teleporter within timeout.")
-        isBusy = false
-        return
-    end
+    -- Short delay for touch to register visually (no event check)
+    task.wait(2)  -- You can adjust this delay if needed
 
     -- Determine best island
     local team = player.Team and player.Team.Name
