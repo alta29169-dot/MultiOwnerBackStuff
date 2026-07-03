@@ -1,79 +1,175 @@
--- Standalone script: creates ButtonGui to test Network.walkAndChangeTeam
+-- Standalone script: walk to teleporter, then teleport to best owned island
 
--- 1. Define local player (client-side)
 local player = game.Players.LocalPlayer
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local teleportEvent = replicatedStorage:WaitForChild("Event")  -- RemoteEvent
 
--- 2. Define the Network table and the provided function
-local Network = {}
+-- ---------- Helper: walk to a part with a small random offset, then touch ----------
+local function walkToPart(character, part)
+    local humanoid = character:WaitForChild("Humanoid")
+    local root = character:WaitForChild("HumanoidRootPart")
 
-function Network.walkAndChangeTeam(requestedTeam, onComplete)
-    local character = player.Character or player.CharacterAdded:Wait()
-    local humanoid  = character:WaitForChild("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return end
+    -- Random offset (±2 studs in X/Z) but final move will be exact
+    local randX = math.random(-200, 200) / 100  -- -2 to 2
+    local randZ = math.random(-200, 200) / 100
+    local intermediatePos = part.Position + Vector3.new(randX, 0, randZ)
 
-    local lobby      = workspace:WaitForChild("Lobby", 10)
-    if not lobby then warn("[Network] Lobby not found"); return end
-    local teamChange = lobby:WaitForChild("TeamChange", 5)
-    local teleporter = lobby:WaitForChild("Teleporter", 5)
-    if not teamChange or not teleporter then return end
+    -- Move to intermediate spot first
+    humanoid:MoveTo(intermediatePos)
+    humanoid.MoveToFinished:Wait()
 
-    local targetPart
-    if requestedTeam == "USA" then
-        targetPart = teamChange:WaitForChild("ToUSA", 5)
-    else
-        targetPart = teamChange:WaitForChild("ToJapan", 5)
+    -- Then move exactly onto the teleporter
+    humanoid:MoveTo(part.Position)
+    humanoid.MoveToFinished:Wait()
+end
+
+-- ---------- Touch detection ----------
+local function waitForTouch(character, part, timeout)
+    local touched = false
+    local connection
+    local startTime = tick()
+
+    connection = part.Touched:Connect(function(hit)
+        if hit:IsDescendantOf(character) then
+            touched = true
+        end
+    end)
+
+    -- Wait until touched or timeout
+    while not touched and tick() - startTime < timeout do
+        task.wait(0.1)
     end
-    if not targetPart then return end
 
-    humanoid:MoveTo(targetPart.Position)
-    humanoid.MoveToFinished:Wait()
-    task.wait(1.5)
-
-    character = player.Character or player.CharacterAdded:Wait()
-    humanoid  = character:WaitForChild("Humanoid")
-    humanoid:MoveTo(teleporter.Position)
-    humanoid.MoveToFinished:Wait()
-    task.wait(2)
-
-    if onComplete then onComplete() end
+    connection:Disconnect()
+    return touched
 end
 
--- 3. Create the testing GUI
+-- ---------- Island scanning & priority ----------
+local function getIslands()
+    local islands = {}
+    -- Look directly in workspace and also in a folder named "Islands" if it exists
+    local folders = {workspace}
+    local islandsFolder = workspace:FindFirstChild("Islands")
+    if islandsFolder then
+        table.insert(folders, islandsFolder)
+    end
+
+    for _, folder in ipairs(folders) do
+        for _, obj in ipairs(folder:GetChildren()) do
+            local codeValue = obj:FindFirstChild("IslandCode")
+            local teamValue = obj:FindFirstChild("Team")
+            if codeValue and codeValue:IsA("StringValue") and
+               teamValue and teamValue:IsA("StringValue") then
+                table.insert(islands, {
+                    code = codeValue.Value,
+                    team = teamValue.Value,
+                })
+            end
+        end
+    end
+    return islands
+end
+
+local function getBestIslandForTeam(team)
+    local priority = {}
+    if team == "USA" then
+        priority = { C = 3, B = 2, A = 1 }
+    elseif team == "Japan" then
+        priority = { A = 3, B = 2, C = 1 }
+    else
+        return "Harbour"  -- fallback
+    end
+
+    local bestCode = nil
+    local bestPriority = 0  -- Harbour has priority 0
+
+    for _, island in ipairs(getIslands()) do
+        if island.team == team and priority[island.code] then
+            local p = priority[island.code]
+            if p > bestPriority then
+                bestPriority = p
+                bestCode = island.code
+            end
+        end
+    end
+
+    return bestCode or "Harbour"
+end
+
+local function fireTeleport(islandCode)
+    if islandCode == "Harbour" then
+        teleportEvent:FireServer("Teleport", { "Harbour", "" })
+        print("Teleporting to Harbour")
+    else
+        teleportEvent:FireServer("Teleport", { "Island", islandCode, 0 })
+        print("Teleporting to Island", islandCode)
+    end
+end
+
+-- ---------- GUI ----------
 local gui = Instance.new("ScreenGui")
-gui.Name = "TeamChangeTest"
+gui.Name = "AutoTeleportGUI"
 gui.ResetOnSpawn = false
-gui.Parent = game:GetService("CoreGui")  -- or player.PlayerGui if preferred
+gui.Parent = game:GetService("CoreGui")
 
--- Helper to create a button
-local function createButton(text, position, callback)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 200, 0, 50)
-    btn.Position = position
-    btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.Text = text
-    btn.Font = Enum.Font.SourceSansBold
-    btn.TextSize = 20
-    btn.Parent = gui
+local btn = Instance.new("TextButton")
+btn.Size = UDim2.new(0, 250, 0, 60)
+btn.Position = UDim2.new(0.5, -125, 0.4, 0)
+btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+btn.Font = Enum.Font.SourceSansBold
+btn.TextSize = 22
+btn.Text = "Teleport to Best Island"
+btn.Parent = gui
 
-    btn.MouseButton1Click:Connect(callback)
-    return btn
-end
+local isBusy = false  -- prevent spamming
 
--- USA button
-createButton("Join USA", UDim2.new(0.5, -100, 0.4, 0), function()
-    print("Testing walkAndChangeTeam -> USA")
-    Network.walkAndChangeTeam("USA", function()
-        print("USA team change sequence completed!")
-    end)
+btn.MouseButton1Click:Connect(function()
+    if isBusy then return end
+    isBusy = true
+
+    local character = player.Character or player.CharacterAdded:Wait()
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then isBusy = false; return end
+
+    local teleporter = workspace:WaitForChild("Lobby"):WaitForChild("Teleporter", 5)
+    if not teleporter then
+        warn("Teleporter not found in workspace.Lobby")
+        isBusy = false
+        return
+    end
+
+    local distance = (root.Position - teleporter.Position).Magnitude
+    if distance > 100 then
+        warn("Teleporter is too far away (", math.floor(distance), " studs)")
+        isBusy = false
+        return
+    end
+
+    -- Walk to teleporter with randomisation
+    print("Walking to teleporter...")
+    walkToPart(character, teleporter)
+
+    -- Wait until we actually touch it (timeout 15 seconds)
+    local touched = waitForTouch(character, teleporter, 15)
+    if not touched then
+        warn("Failed to touch teleporter within timeout.")
+        isBusy = false
+        return
+    end
+
+    -- Determine best island
+    local team = player.Team and player.Team.Name
+    if not team then
+        warn("You are not on a team yet.")
+        isBusy = false
+        return
+    end
+
+    local bestIsland = getBestIslandForTeam(team)
+    fireTeleport(bestIsland)
+
+    isBusy = false
 end)
 
--- Japan button
-createButton("Join Japan", UDim2.new(0.5, -100, 0.55, 0), function()
-    print("Testing walkAndChangeTeam -> Japan")
-    Network.walkAndChangeTeam("Japan", function()
-        print("Japan team change sequence completed!")
-    end)
-end)
-
-print("[Test GUI] Loaded. Press a button to trigger the team change sequence.")
+print("[AutoTeleport] GUI loaded. Click the button to walk and teleport.")
