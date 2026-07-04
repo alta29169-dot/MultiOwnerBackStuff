@@ -1,7 +1,7 @@
 -- ============================================================
---  AimDiag_HugeTarget_Fix.lua
---  Target: 1000x1000x1000, 1800 ahead, 300 above.
---  Bullets are NOT destroyed – we only log their position.
+--  AimDiag_Polling.lua 23
+--  Polls workspace for new "bullet" parts instead of relying
+--  on ChildAdded events.  Much more robust.
 -- ============================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,9 +9,9 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local SHIP_TYPES = { "Destroyer", "Cruiser", "Heavy Cruiser" }
-local FIRE_INTERVAL = 4          -- seconds between shots
-local TARGET_Y_OFFSET = 300      -- studs above ship's starting Y
-local TARGET_DISTANCE = 1800     -- how far ahead the target is placed
+local FIRE_INTERVAL = 4
+local TARGET_Y_OFFSET = 300
+local TARGET_DISTANCE = 1800
 
 -- ---------- Find my ship ----------
 local function findMyShip()
@@ -41,7 +41,7 @@ local function seatInShip(ship)
     return true
 end
 
--- ---------- Create a huge target ----------
+-- ---------- Create huge target ----------
 local function createTarget(shipMainBody)
     local target = Instance.new("Part")
     target.Name = "AimTarget"
@@ -51,7 +51,6 @@ local function createTarget(shipMainBody)
     target.BrickColor = BrickColor.new("Lime green")
     target.Transparency = 0.5
     target.Parent = workspace
-
     local forwardPos = shipMainBody.Position + shipMainBody.CFrame.LookVector * TARGET_DISTANCE
     target.Position = Vector3.new(forwardPos.X, shipMainBody.Position.Y + TARGET_Y_OFFSET, forwardPos.Z)
     return target
@@ -66,28 +65,18 @@ local function runDiagnostic(ship)
     local targetPos = target.Position
     print("[Diag] Huge target placed at:", targetPos)
 
-    -- Remove AlignOrientation
     local align = mainBody:FindFirstChild("AlignOrientation")
     if align then align:Destroy() end
 
-    -- Bullet tracking (do NOT destroy the bullet)
-    local lastBulletPos = nil
-    local bulletReceived = false
-    local bulletConn
-    bulletConn = workspace.ChildAdded:Connect(function(child)
-        if child.Name == "bullet" and child:IsA("BasePart") then
-            lastBulletPos = child.Position
-            bulletReceived = true
-            -- No destruction – game will clean it up
-        end
-    end)
-
+    -- We'll collect bullet positions by polling workspace
     local lastFireTime = 0
+    local bulletDetected = false
+    local detectedBulletPos = nil
+
     local conn
     conn = RunService.Heartbeat:Connect(function()
         if not ship.Parent then
             conn:Disconnect()
-            bulletConn:Disconnect()
             target:Destroy()
             print("[Diag] Ship destroyed – stopping.")
             return
@@ -95,25 +84,36 @@ local function runDiagnostic(ship)
 
         local now = tick()
         if now - lastFireTime >= FIRE_INTERVAL then
-            -- Aim at target center
+            -- Aim & fire
             pcall(function()
                 ReplicatedStorage.Event:FireServer("aim", { targetPos })
             end)
             task.wait(0.2)
-
-            bulletReceived = false
-            lastBulletPos = nil
+            bulletDetected = false
+            detectedBulletPos = nil
             pcall(function()
                 ReplicatedStorage.Event:FireServer("bomb", { true })
             end)
             lastFireTime = now
 
-            task.wait(0.8)  -- let bullet reach
+            -- Poll for a bullet over the next 1 second
+            local pollStart = tick()
+            while tick() - pollStart < 1.0 do
+                for _, child in ipairs(workspace:GetChildren()) do
+                    if child.Name == "bullet" and child:IsA("BasePart") then
+                        detectedBulletPos = child.Position
+                        bulletDetected = true
+                        break
+                    end
+                end
+                if bulletDetected then break end
+                task.wait(0.05)
+            end
 
             local dist = (mainBody.Position - targetPos).Magnitude
-            if bulletReceived and lastBulletPos then
-                local yOffset = lastBulletPos.Y - targetPos.Y
-                local hOffset = (Vector3.new(lastBulletPos.X, 0, lastBulletPos.Z) - Vector3.new(targetPos.X, 0, targetPos.Z)).Magnitude
+            if bulletDetected and detectedBulletPos then
+                local yOffset = detectedBulletPos.Y - targetPos.Y
+                local hOffset = (Vector3.new(detectedBulletPos.X, 0, detectedBulletPos.Z) - Vector3.new(targetPos.X, 0, targetPos.Z)).Magnitude
                 print(string.format("Dist: %6.1f | Y-offset: %6.1f | H-offset: %6.1f", dist, yOffset, hOffset))
             else
                 print(string.format("Dist: %6.1f | (no bullet detected)", dist))
