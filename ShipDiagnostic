@@ -1,8 +1,7 @@
 -- ============================================================
---  AimDiag_Passive.lua
---  Places a target, then logs bullet Y‑offset vs distance
---  as YOU manually drive the ship closer.
---  No movement control – just fire and observe.
+--  AimDiag_Passive_High.lua
+--  Target is placed 300 studs ABOVE your ship to avoid ocean floor.
+--  You drive closer manually; the script aims, fires, and logs.
 -- ============================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -10,7 +9,8 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local SHIP_TYPES = { "Destroyer", "Cruiser", "Heavy Cruiser" }
-local FIRE_INTERVAL = 4   -- seconds between shots (so you have time to move)
+local FIRE_INTERVAL = 4          -- seconds between shots
+local TARGET_Y_OFFSET = 300      -- studs above your ship's starting Y
 
 -- ---------- Find my ship ----------
 local function findMyShip()
@@ -40,7 +40,7 @@ local function seatInShip(ship)
     return true
 end
 
--- ---------- Create a fixed target ----------
+-- ---------- Create a high target ----------
 local function createTarget(shipMainBody)
     local target = Instance.new("Part")
     target.Name = "AimTarget"
@@ -51,9 +51,9 @@ local function createTarget(shipMainBody)
     target.Transparency = 0.3
     target.Parent = workspace
 
-    -- Place it 800 studs straight ahead of the ship's starting position
-    local pos = shipMainBody.Position + shipMainBody.CFrame.LookVector * 800
-    target.Position = Vector3.new(pos.X, shipMainBody.Position.Y, pos.Z)
+    -- Place 800 studs ahead, 300 studs above ship's current Y
+    local forwardPos = shipMainBody.Position + shipMainBody.CFrame.LookVector * 800
+    target.Position = Vector3.new(forwardPos.X, shipMainBody.Position.Y + TARGET_Y_OFFSET, forwardPos.Z)
     return target
 end
 
@@ -64,9 +64,9 @@ local function runDiagnostic(ship)
 
     local target = createTarget(mainBody)
     local targetPos = target.Position
-    print("[Diag] Target placed at:", targetPos)
+    print("[Diag] Target placed HIGH at:", targetPos)
 
-    -- Remove AlignOrientation (harmless, but helps aim accuracy)
+    -- Remove AlignOrientation (harmless, helps aim)
     local align = mainBody:FindFirstChild("AlignOrientation")
     if align then align:Destroy() end
 
@@ -78,11 +78,10 @@ local function runDiagnostic(ship)
         if child.Name == "bullet" and child:IsA("BasePart") then
             lastBulletPos = child.Position
             bulletReceived = true
-            child:Destroy()  -- clean up
+            child:Destroy()
         end
     end)
 
-    -- Fire loop
     local lastFireTime = 0
     local conn
     conn = RunService.Heartbeat:Connect(function()
@@ -96,13 +95,12 @@ local function runDiagnostic(ship)
 
         local now = tick()
         if now - lastFireTime >= FIRE_INTERVAL then
-            -- Aim at target
+            -- Aim at target center
             pcall(function()
                 ReplicatedStorage.Event:FireServer("aim", { targetPos })
             end)
             task.wait(0.2)
 
-            -- Reset bullet flag, fire
             bulletReceived = false
             lastBulletPos = nil
             pcall(function()
@@ -110,10 +108,8 @@ local function runDiagnostic(ship)
             end)
             lastFireTime = now
 
-            -- Wait a moment for bullet to appear
-            task.wait(0.5)
+            task.wait(0.5)  -- let bullet appear
 
-            -- Log
             local dist = (mainBody.Position - targetPos).Magnitude
             if bulletReceived and lastBulletPos then
                 local yOffset = lastBulletPos.Y - targetPos.Y
@@ -134,7 +130,8 @@ local function start()
     if not seatInShip(ship) then return end
     task.wait(1)
     runDiagnostic(ship)
-    print("[Diag] Running. Drive toward the green target. Data will appear here.")
+    print("[Diag] Running. A green cube is 800 studs ahead, 300 studs above you.")
+    print("[Diag] Drive toward it manually. Data will appear here every 4 seconds.")
 end
 
 start()
