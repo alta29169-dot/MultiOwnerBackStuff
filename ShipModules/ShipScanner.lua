@@ -3,14 +3,14 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
 local Scanner = {}
-local Config = nil   -- set by init
+local Config = nil
 
 function Scanner.init(cfg)
     Config = cfg
 end
 
--- Find my ship (Owner StringValue matches LocalPlayer.Name)
 function Scanner.findMyShip()
+    if not Config then warn("[ShipScanner] Config not set"); return nil end
     for _, shipType in ipairs(Config.SHIP_TYPES) do
         for _, ship in ipairs(workspace:GetChildren()) do
             if ship:IsA("Model") and ship.Name == shipType then
@@ -24,8 +24,8 @@ function Scanner.findMyShip()
     return nil
 end
 
--- Find nearest enemy ship (Team StringValue differs from myTeam)
 function Scanner.findEnemyShip(myTeam)
+    if not Config then return nil end
     local bestDist = math.huge
     local bestShip = nil
     local myPos = (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart"))
@@ -52,7 +52,6 @@ function Scanner.findEnemyShip(myTeam)
     return bestShip
 end
 
--- Seat the player in the ship
 function Scanner.seatInShip(ship)
     local seat = ship:FindFirstChild("Seat")
     if not seat then return false end
