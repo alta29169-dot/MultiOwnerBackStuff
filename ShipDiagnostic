@@ -1,7 +1,7 @@
 -- ============================================================
---  AimDiag_Polling.lua 23
---  Polls workspace for new "bullet" parts instead of relying
---  on ChildAdded events.  Much more robust.
+--  AimTuner.lua
+--  GUI with a Y‑offset box.  Shoot nearest enemy every 4s.
+--  Logs distance + offset used.  Tune until you see hits.
 -- ============================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,9 +9,53 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local SHIP_TYPES = { "Destroyer", "Cruiser", "Heavy Cruiser" }
-local FIRE_INTERVAL = 4
-local TARGET_Y_OFFSET = 100
-local TARGET_DISTANCE = 1800
+local FIRE_INTERVAL = 4   -- seconds
+
+-- ---------- GUI ----------
+local function createGui()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "AimTunerGui"
+    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 180, 0, 60)
+    frame.Position = UDim2.new(0, 20, 0, 20)
+    frame.BackgroundColor3 = Color3.new(0, 0, 0)
+    frame.BackgroundTransparency = 0.5
+    frame.Parent = screenGui
+
+    local label = Instance.new("TextLabel")
+    label.Text = "Y Offset:"
+    label.Size = UDim2.new(0, 60, 0, 20)
+    label.Position = UDim2.new(0, 5, 0, 5)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.Font = Enum.Font.SourceSans
+    label.TextSize = 14
+    label.Parent = frame
+
+    local textBox = Instance.new("TextBox")
+    textBox.Size = UDim2.new(0, 80, 0, 20)
+    textBox.Position = UDim2.new(0, 70, 0, 5)
+    textBox.Text = "0"
+    textBox.BackgroundColor3 = Color3.new(0.3, 0.3, 0.3)
+    textBox.TextColor3 = Color3.new(1, 1, 1)
+    textBox.Font = Enum.Font.SourceSans
+    textBox.TextSize = 14
+    textBox.Parent = frame
+
+    local infoLabel = Instance.new("TextLabel")
+    infoLabel.Text = "Aim at nearest enemy every 4s"
+    infoLabel.Size = UDim2.new(0, 170, 0, 20)
+    infoLabel.Position = UDim2.new(0, 5, 0, 30)
+    infoLabel.BackgroundTransparency = 1
+    infoLabel.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+    infoLabel.Font = Enum.Font.SourceSans
+    infoLabel.TextSize = 12
+    infoLabel.Parent = frame
+
+    return textBox
+end
 
 -- ---------- Find my ship ----------
 local function findMyShip()
@@ -41,97 +85,81 @@ local function seatInShip(ship)
     return true
 end
 
--- ---------- Create huge target ----------
-local function createTarget(shipMainBody)
-    local target = Instance.new("Part")
-    target.Name = "AimTarget"
-    target.Anchored = true
-    target.CanCollide = false
-    target.Size = Vector3.new(100, 100, 100)
-    target.BrickColor = BrickColor.new("Lime green")
-    target.Transparency = 0.5
-    target.Parent = workspace
-    local forwardPos = shipMainBody.Position + shipMainBody.CFrame.LookVector * TARGET_DISTANCE
-    target.Position = Vector3.new(forwardPos.X, shipMainBody.Position.Y + TARGET_Y_OFFSET, forwardPos.Z)
-    return target
+-- ---------- Find nearest enemy ship ----------
+local function findEnemyShip(myTeam)
+    local bestDist = math.huge
+    local bestShip = nil
+    for _, shipType in ipairs(SHIP_TYPES) do
+        for _, ship in ipairs(workspace:GetChildren()) do
+            if ship:IsA("Model") and ship.Name == shipType then
+                local teamVal = ship:FindFirstChild("Team")
+                if teamVal and teamVal:IsA("StringValue") and teamVal.Value ~= myTeam then
+                    local mainBody = ship:FindFirstChild("MainBody")
+                    if mainBody then
+                        local myPos = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                                      and LocalPlayer.Character.HumanoidRootPart.Position or Vector3.zero
+                        local dist = (mainBody.Position - myPos).Magnitude
+                        if dist < bestDist then
+                            bestDist = dist
+                            bestShip = ship
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestShip
 end
 
--- ---------- Main loop ----------
-local function runDiagnostic(ship)
-    local mainBody = ship:FindFirstChild("MainBody")
-    if not mainBody then warn("No MainBody"); return end
+-- ---------- Main ----------
+local function start()
+    print("[AimTuner] Looking for ship...")
+    local ship = findMyShip()
+    if not ship then warn("No ship found"); return end
+    if not seatInShip(ship) then return end
+    task.wait(0.5)
 
-    local target = createTarget(mainBody)
-    local targetPos = target.Position
-    print("[Diag] Huge target placed at:", targetPos)
-
-    local align = mainBody:FindFirstChild("AlignOrientation")
-    if align then align:Destroy() end
-
-    -- We'll collect bullet positions by polling workspace
+    local offsetBox = createGui()
+    local myTeam = (ship:FindFirstChild("Team") and ship:FindFirstChild("Team").Value) or ""
     local lastFireTime = 0
-    local bulletDetected = false
-    local detectedBulletPos = nil
 
     local conn
     conn = RunService.Heartbeat:Connect(function()
         if not ship.Parent then
             conn:Disconnect()
-            target:Destroy()
-            print("[Diag] Ship destroyed – stopping.")
+            print("[AimTuner] Ship destroyed.")
             return
         end
 
         local now = tick()
         if now - lastFireTime >= FIRE_INTERVAL then
-            -- Aim & fire
-            pcall(function()
-                ReplicatedStorage.Event:FireServer("aim", { targetPos })
-            end)
-            task.wait(0.2)
-            bulletDetected = false
-            detectedBulletPos = nil
-            pcall(function()
-                ReplicatedStorage.Event:FireServer("bomb", { true })
-            end)
-            lastFireTime = now
+            local enemyShip = findEnemyShip(myTeam)
+            if enemyShip then
+                local enemyBody = enemyShip:FindFirstChild("MainBody")
+                if enemyBody then
+                    local offset = tonumber(offsetBox.Text) or 0
+                    local aimPos = enemyBody.Position + Vector3.new(0, offset, 0)
 
-            -- Poll for a bullet over the next 1 second
-            local pollStart = tick()
-            while tick() - pollStart < 1.0 do
-                for _, child in ipairs(workspace:GetChildren()) do
-                    if child.Name == "bullet" and child:IsA("BasePart") then
-                        detectedBulletPos = child.Position
-                        bulletDetected = true
-                        break
-                    end
+                    pcall(function()
+                        ReplicatedStorage.Event:FireServer("aim", { aimPos })
+                    end)
+                    task.wait(0.2)
+                    pcall(function()
+                        ReplicatedStorage.Event:FireServer("bomb", { true })
+                    end)
+
+                    local dist = (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                                  and LocalPlayer.Character.HumanoidRootPart.Position or Vector3.zero - enemyBody.Position).Magnitude
+                    print(string.format("Fired at %s | Dist: %.0f | Y-offset: %.0f", enemyShip.Name, dist, offset))
+                    lastFireTime = now
                 end
-                if bulletDetected then break end
-                task.wait(0.05)
-            end
-
-            local dist = (mainBody.Position - targetPos).Magnitude
-            if bulletDetected and detectedBulletPos then
-                local yOffset = detectedBulletPos.Y - targetPos.Y
-                local hOffset = (Vector3.new(detectedBulletPos.X, 0, detectedBulletPos.Z) - Vector3.new(targetPos.X, 0, targetPos.Z)).Magnitude
-                print(string.format("Dist: %6.1f | Y-offset: %6.1f | H-offset: %6.1f", dist, yOffset, hOffset))
             else
-                print(string.format("Dist: %6.1f | (no bullet detected)", dist))
+                -- No enemy, wait a bit longer to avoid spam
+                task.wait(2)
+                lastFireTime = tick()
             end
         end
     end)
-end
-
--- ---------- Entry ----------
-local function start()
-    print("[Diag] Looking for ship...")
-    local ship = findMyShip()
-    if not ship then warn("No ship found"); return end
-    if not seatInShip(ship) then return end
-    task.wait(1)
-    runDiagnostic(ship)
-    print("[Diag] Running. Giant green target 1800 studs ahead, 300 above you.")
-    print("[Diag] Drive toward it manually. Logs every 4s.")
 end
 
 start()
