@@ -1,5 +1,5 @@
 -- ============================================================
---  ShipMovementTest.lua
+--  ShipMovementTest.lua 2
 --  Finds your Destroyer / Cruiser / Heavy Cruiser, seats you,
 --  then measures forward speed & turn rate.
 -- ============================================================
@@ -15,12 +15,16 @@ local TURN_SPEED_TARGET   = 1.5    -- rad/s to try for turning
 
 -- ---------- Find my ship ----------
 local function findMyShip()
-    for _, name in ipairs(SHIP_TYPES) do
-        local ship = workspace:FindFirstChild(name)
-        if ship then
-            local ownerVal = ship:FindFirstChild("Owner")
-            if ownerVal and ownerVal:IsA("StringValue") and ownerVal.Value == LocalPlayer.Name then
-                return ship
+    for _, shipType in ipairs(SHIP_TYPES) do
+        -- Get every direct child of workspace with that name
+        local ships = workspace:GetChildren()
+        for _, ship in ipairs(ships) do
+            if ship:IsA("Model") and ship.Name == shipType then
+                local ownerVal = ship:FindFirstChild("Owner")
+                if ownerVal and ownerVal:IsA("StringValue") and ownerVal.Value == LocalPlayer.Name then
+                    print("[ShipTest] Found", shipType, "– Owner:", ownerVal.Value)
+                    return ship
+                end
             end
         end
     end
