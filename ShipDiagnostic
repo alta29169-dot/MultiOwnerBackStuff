@@ -10,7 +10,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local SHIP_TYPES = { "Destroyer", "Cruiser", "Heavy Cruiser" }
 local FIRE_INTERVAL = 4
-local TARGET_Y_OFFSET = 300
+local TARGET_Y_OFFSET = 100
 local TARGET_DISTANCE = 1800
 
 -- ---------- Find my ship ----------
@@ -47,7 +47,7 @@ local function createTarget(shipMainBody)
     target.Name = "AimTarget"
     target.Anchored = true
     target.CanCollide = false
-    target.Size = Vector3.new(1000, 1000, 1000)
+    target.Size = Vector3.new(100, 100, 100)
     target.BrickColor = BrickColor.new("Lime green")
     target.Transparency = 0.5
     target.Parent = workspace
