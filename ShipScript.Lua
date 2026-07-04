@@ -1,5 +1,5 @@
 -- ============================================================
---  ShipMoveTest.lua
+--  ShipMoveTest.lua 2
 --  Rotates toward a target, then moves forward at 43 studs/s.
 -- ============================================================
 local Players = game:GetService("Players")
@@ -53,6 +53,7 @@ local function disableAlign(mainBody)
 end
 
 -- ---------- Movement loop ----------
+-- ---------- Movement loop ----------
 local function moveToTarget(ship)
     local mainBody = ship:FindFirstChild("MainBody")
     if not mainBody then warn("MainBody not found"); return end
@@ -67,7 +68,6 @@ local function moveToTarget(ship)
         return
     end
 
-    -- Helper: set forward speed
     local function setForward(speed)
         local dir = mainBody.CFrame.LookVector
         if bodyVel:IsA("LinearVelocity") then
@@ -78,7 +78,6 @@ local function moveToTarget(ship)
         bodyVel.MaxForce = 1e9
     end
 
-    -- Helper: stop movement
     local function stopMovement()
         if bodyVel:IsA("LinearVelocity") then
             bodyVel.VectorVelocity = Vector3.zero
@@ -87,7 +86,6 @@ local function moveToTarget(ship)
         end
     end
 
-    -- Helper: set turn
     local function setTurn(radPerSec)
         if bodyAngVel:IsA("AngularVelocity") then
             bodyAngVel.AngularVelocity = Vector3.new(0, radPerSec, 0)
@@ -97,7 +95,6 @@ local function moveToTarget(ship)
         bodyAngVel.MaxTorque = 1e9
     end
 
-    -- Helper: stop turning
     local function stopTurning()
         if bodyAngVel:IsA("AngularVelocity") then
             bodyAngVel.AngularVelocity = Vector3.zero
@@ -106,7 +103,8 @@ local function moveToTarget(ship)
         end
     end
 
-    -- Main control loop
+    local lastPrint = tick()
+
     local conn
     conn = RunService.Heartbeat:Connect(function()
         if not ship.Parent then conn:Disconnect() return end
@@ -125,20 +123,28 @@ local function moveToTarget(ship)
             return
         end
 
-        -- Angle between ship's LookVector and target direction (in degrees)
         local dot = mainBody.CFrame.LookVector:Dot(targetDir)
         local angleDeg = math.deg(math.acos(math.clamp(dot, -1, 1)))
 
         if angleDeg > ANGLE_THRESHOLD_DEG then
-            -- Rotate toward target
             local cross = mainBody.CFrame.LookVector:Cross(targetDir)
-            local sign = (cross.Y >= 0) and 1 or -1   -- Y axis rotation
+            local sign = (cross.Y >= 0) and 1 or -1
             setTurn(sign * TURN_SPEED_RAD)
             stopMovement()
         else
-            -- Facing target – move forward
             stopTurning()
             setForward(FORWARD_SPEED)
+        end
+
+        -- Speed checker: print once per second
+        local now = tick()
+        if now - lastPrint > 1.0 then
+            local actualSpeed = mainBody.AssemblyLinearVelocity.Magnitude
+            local actualTurn = bodyAngVel:IsA("AngularVelocity")
+                and bodyAngVel.AngularVelocity.Y or 0
+            print(string.format("[ShipMove] Speed: %.1f studs/s | Turn: %.2f rad/s",
+                actualSpeed, actualTurn))
+            lastPrint = now
         end
     end)
 
