@@ -1,19 +1,40 @@
 -- ============================================================
---  ShipMove_BodyMovers_Fixed.lua
---  Direct BodyMover control with correct force limits.
---  Destroys AlignOrientation, sets huge MaxAxesForce,
---  and applies smooth proportional turning + constant forward.
+--  ShipMove_Final.lua
+--  Destroys the native "Control" LocalScript that fights
+--  BodyMovers, then moves the ship smoothly to a target.
 -- ============================================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local SHIP_TYPES = { "Destroyer", "Cruiser", "Heavy Cruiser" }
-local TARGET_POS = Vector3.new(1000, 0, 1000)   -- change me
+local TARGET_POS = Vector3.new(1000, 0, 1000)   -- change to any world position
 
 local FORWARD_SPEED = 43
 local TURN_SPEED_RAD = 0.30
 local STOP_DISTANCE = 50
+
+-- ---------- Remove the native control script ----------
+local function disableNativeControl()
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return end
+
+    -- Kill existing copies
+    for _, child in ipairs(backpack:GetChildren()) do
+        if child.Name == "Control" and child:IsA("LocalScript") then
+            child:Destroy()
+            print("[ShipMove] Destroyed native Control script")
+        end
+    end
+
+    -- Watch for the game cloning a new one (e.g. on re‑seat)
+    backpack.ChildAdded:Connect(function(child)
+        if child.Name == "Control" and child:IsA("LocalScript") then
+            child:Destroy()
+            print("[ShipMove] Destroyed new Control script")
+        end
+    end)
+end
 
 -- ---------- Find my ship ----------
 local function findMyShip()
@@ -33,20 +54,21 @@ end
 -- ---------- Seat ----------
 local function seatInShip(ship)
     local seat = ship:FindFirstChild("Seat")
-    if not seat then warn("No Seat"); return false end
+    if not seat then warn("[ShipMove] No Seat"); return false end
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:WaitForChild("HumanoidRootPart")
     local hum = char:WaitForChild("Humanoid")
     hrp.CFrame = seat.CFrame + Vector3.new(0, 2, 0)
     task.wait(0.3)
     seat:Sit(hum)
+    print("[ShipMove] Seated in", ship.Name)
     return true
 end
 
 -- ---------- Movement ----------
 local function moveToTarget(ship)
     local mainBody = ship:FindFirstChild("MainBody")
-    if not mainBody then warn("MainBody not found"); return end
+    if not mainBody then warn("[ShipMove] MainBody not found"); return end
 
     -- Destroy AlignOrientation so it doesn't fight us
     local align = mainBody:FindFirstChild("AlignOrientation")
@@ -56,11 +78,11 @@ local function moveToTarget(ship)
     local bodyAngVel = mainBody:FindFirstChild("BodyAngularVelocity") or mainBody:FindFirstChildWhichIsA("AngularVelocity")
 
     if not bodyVel or not bodyAngVel then
-        warn("Missing BodyVelocity or BodyAngularVelocity")
+        warn("[ShipMove] Missing BodyVelocity or BodyAngularVelocity")
         return
     end
 
-    -- CRITICAL: raise per‑axis force limits to avoid the 0‑speed drops
+    -- CRITICAL: raise per‑axis force limits
     if bodyVel:IsA("LinearVelocity") then
         bodyVel.MaxForce = 1e9
         bodyVel.MaxAxesForce = Vector3.new(1e9, 1e9, 1e9)
@@ -106,7 +128,7 @@ local function moveToTarget(ship)
         local sign = (cross.Y >= 0) and 1 or -1
 
         -- Proportional turn, capped at max turn rate
-        local turnGain = 1.5   -- increase for sharper turns
+        local turnGain = 1.5
         local desiredTurn = sign * math.min(angleRad * turnGain, TURN_SPEED_RAD)
 
         -- Apply turn
@@ -116,7 +138,7 @@ local function moveToTarget(ship)
             bodyAngVel.AngularVelocity = Vector3.new(0, desiredTurn, 0)
         end
 
-        -- Always move forward at full speed
+        -- Always move forward
         local forwardDir = mainBody.CFrame.LookVector
         if bodyVel:IsA("LinearVelocity") then
             bodyVel.VectorVelocity = forwardDir * FORWARD_SPEED
@@ -140,9 +162,10 @@ end
 local function start()
     print("[ShipMove] Looking for ship...")
     local ship = findMyShip()
-    if not ship then warn("No ship found"); return end
+    if not ship then warn("[ShipMove] No ship found"); return end
     if not seatInShip(ship) then return end
-    task.wait(1)
+    task.wait(0.5)
+    disableNativeControl()   -- kill the Control script
     moveToTarget(ship)
 end
 
