@@ -9,7 +9,6 @@ function Mover.init(cfg)
     Config = cfg
 end
 
--- Kill the native Control script and watch for new copies
 function Mover.disableNativeControl()
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if not backpack then return end
@@ -30,12 +29,11 @@ function Mover.disableNativeControl()
     end)
 end
 
--- Prepare the ship's BodyMovers for our commands
 function Mover.prepareBodyMovers(ship)
+    if not Config then return nil, nil, nil end
     local mainBody = ship:FindFirstChild("MainBody")
     if not mainBody then return nil, nil, nil end
 
-    -- Remove AlignOrientation
     local align = mainBody:FindFirstChild("AlignOrientation")
     if align then align:Destroy() end
 
@@ -47,7 +45,6 @@ function Mover.prepareBodyMovers(ship)
         return nil, nil, nil
     end
 
-    -- Raise force limits
     if bodyVel:IsA("LinearVelocity") then
         bodyVel.MaxForce = 1e9
         bodyVel.MaxAxesForce = Vector3.new(1e9, 1e9, 1e9)
@@ -59,15 +56,14 @@ function Mover.prepareBodyMovers(ship)
     return mainBody, bodyVel, bodyAngVel
 end
 
--- Steer and move toward a target position (called every heartbeat)
 function Mover.navigateTo(body, bodyVel, bodyAngVel, targetPos)
+    if not Config then return false end
     local myPos = body.Position
     local toTarget = targetPos - myPos
     local dist = toTarget.Magnitude
     local targetDir = toTarget.Unit
 
     if dist < Config.STOP_DISTANCE then
-        -- Stop
         if bodyVel:IsA("LinearVelocity") then
             bodyVel.VectorVelocity = Vector3.zero
         else
@@ -78,24 +74,21 @@ function Mover.navigateTo(body, bodyVel, bodyAngVel, targetPos)
         else
             bodyAngVel.AngularVelocity = Vector3.zero
         end
-        return true   -- arrived
+        return true
     end
 
-    -- Angle error
     local dot = body.CFrame.LookVector:Dot(targetDir)
     local angleRad = math.acos(math.clamp(dot, -1, 1))
     local cross = body.CFrame.LookVector:Cross(targetDir)
     local sign = (cross.Y >= 0) and 1 or -1
     local desiredTurn = sign * math.min(angleRad * Config.TURN_GAIN, Config.TURN_SPEED_RAD)
 
-    -- Apply turn
     if bodyAngVel:IsA("AngularVelocity") then
         bodyAngVel.AngularVelocity = Vector3.new(0, desiredTurn, 0)
     else
         bodyAngVel.AngularVelocity = Vector3.new(0, desiredTurn, 0)
     end
 
-    -- Apply forward speed
     local forwardDir = body.CFrame.LookVector
     if bodyVel:IsA("LinearVelocity") then
         bodyVel.VectorVelocity = forwardDir * Config.FORWARD_SPEED
