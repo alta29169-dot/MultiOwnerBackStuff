@@ -1,8 +1,8 @@
 -- ============================================================
---  AimDiagnostic.lua
---  Automatically measures shell Y‑offset at multiple distances.
---  Shoots a green target, tracks where "bullet" parts appear,
---  logs offset and distance, then moves closer and repeats.
+--  AimDiag_Passive.lua
+--  Places a target, then logs bullet Y‑offset vs distance
+--  as YOU manually drive the ship closer.
+--  No movement control – just fire and observe.
 -- ============================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -10,10 +10,7 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local SHIP_TYPES = { "Destroyer", "Cruiser", "Heavy Cruiser" }
-local FORWARD_SPEED = 20        -- slower so we can measure many points
-local TARGET_DISTANCE_START = 800   -- start 800 studs away
-local TARGET_DISTANCE_END = 100     -- stop when 100 studs away
-local MOVE_STEP = 50               -- how far we move forward between shots
+local FIRE_INTERVAL = 4   -- seconds between shots (so you have time to move)
 
 -- ---------- Find my ship ----------
 local function findMyShip()
@@ -43,27 +40,8 @@ local function seatInShip(ship)
     return true
 end
 
--- ---------- Disable native Control ----------
-local function disableNativeControl()
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if not backpack then return end
-    local function destroy()
-        for _, child in ipairs(backpack:GetChildren()) do
-            if child.Name == "Control" and child:IsA("LocalScript") then
-                child:Destroy()
-            end
-        end
-    end
-    destroy()
-    backpack.ChildAdded:Connect(function(child)
-        if child.Name == "Control" and child:IsA("LocalScript") then
-            child:Destroy()
-        end
-    end)
-end
-
--- ---------- Create a large visible target ----------
-local function createTarget()
+-- ---------- Create a fixed target ----------
+local function createTarget(shipMainBody)
     local target = Instance.new("Part")
     target.Name = "AimTarget"
     target.Anchored = true
@@ -72,165 +50,91 @@ local function createTarget()
     target.BrickColor = BrickColor.new("Lime green")
     target.Transparency = 0.3
     target.Parent = workspace
+
+    -- Place it 800 studs straight ahead of the ship's starting position
+    local pos = shipMainBody.Position + shipMainBody.CFrame.LookVector * 800
+    target.Position = Vector3.new(pos.X, shipMainBody.Position.Y, pos.Z)
     return target
 end
 
--- ---------- Move the ship forward while facing the target ----------
-local function moveShipTowardTarget(ship, mainBody, targetPos)
-    local bodyVel = mainBody:FindFirstChild("BodyVelocity") or mainBody:FindFirstChildWhichIsA("LinearVelocity")
-    local bodyAngVel = mainBody:FindFirstChild("BodyAngularVelocity") or mainBody:FindFirstChildWhichIsA("AngularVelocity")
-
-    -- Raise force limits
-    if bodyVel:IsA("LinearVelocity") then
-        bodyVel.MaxForce = 1e9
-        bodyVel.MaxAxesForce = Vector3.new(1e9, 1e9, 1e9)
-    else
-        bodyVel.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-    end
-    if bodyAngVel then bodyAngVel.MaxTorque = 1e9 end
-
-    -- Navigate toward the target at slow speed
-    local conn
-    conn = RunService.Heartbeat:Connect(function()
-        if not ship.Parent then conn:Disconnect() return end
-
-        local myPos = mainBody.Position
-        local toTarget = targetPos - myPos
-        local dist = toTarget.Magnitude
-        if dist < MOVE_STEP then
-            -- Stop when close enough to the target
-            if bodyVel:IsA("LinearVelocity") then
-                bodyVel.VectorVelocity = Vector3.zero
-            else
-                bodyVel.Velocity = Vector3.zero
-            end
-            if bodyAngVel then
-                if bodyAngVel:IsA("AngularVelocity") then
-                    bodyAngVel.AngularVelocity = Vector3.zero
-                else
-                    bodyAngVel.AngularVelocity = Vector3.zero
-                end
-            end
-            conn:Disconnect()
-            return
-        end
-
-        local targetDir = toTarget.Unit
-        -- Turn toward target
-        local dot = mainBody.CFrame.LookVector:Dot(targetDir)
-        local angleRad = math.acos(math.clamp(dot, -1, 1))
-        local cross = mainBody.CFrame.LookVector:Cross(targetDir)
-        local sign = (cross.Y >= 0) and 1 or -1
-        local turnRate = 0.15  -- slow turn
-        local desiredTurn = sign * math.min(angleRad * 1.5, turnRate)
-        if bodyAngVel then
-            if bodyAngVel:IsA("AngularVelocity") then
-                bodyAngVel.AngularVelocity = Vector3.new(0, desiredTurn, 0)
-            else
-                bodyAngVel.AngularVelocity = Vector3.new(0, desiredTurn, 0)
-            end
-        end
-
-        -- Move forward slowly
-        local forwardDir = mainBody.CFrame.LookVector
-        if bodyVel:IsA("LinearVelocity") then
-            bodyVel.VectorVelocity = forwardDir * FORWARD_SPEED
-        else
-            bodyVel.Velocity = forwardDir * FORWARD_SPEED
-        end
-    end)
-end
-
--- ---------- Main diagnostic loop ----------
+-- ---------- Main loop ----------
 local function runDiagnostic(ship)
     local mainBody = ship:FindFirstChild("MainBody")
     if not mainBody then warn("No MainBody"); return end
 
-    -- Place target directly ahead of ship at desired start distance
-    local target = createTarget()
-    local startPos = mainBody.Position + mainBody.CFrame.LookVector * TARGET_DISTANCE_START
-    target.Position = Vector3.new(startPos.X, mainBody.Position.Y, startPos.Z)   -- same altitude
+    local target = createTarget(mainBody)
     local targetPos = target.Position
+    print("[Diag] Target placed at:", targetPos)
 
-    print("[Diagnostic] Target placed at:", targetPos)
-    print("[Diagnostic] Starting measurements...")
-
-    -- Remove AlignOrientation
+    -- Remove AlignOrientation (harmless, but helps aim accuracy)
     local align = mainBody:FindFirstChild("AlignOrientation")
     if align then align:Destroy() end
 
-    -- Set up bullet tracking
+    -- Bullet tracking
     local lastBulletPos = nil
     local bulletReceived = false
-    local function onBulletAdded(child)
+    local bulletConn
+    bulletConn = workspace.ChildAdded:Connect(function(child)
         if child.Name == "bullet" and child:IsA("BasePart") then
             lastBulletPos = child.Position
             bulletReceived = true
-            -- Optionally delete the bullet to clean up workspace
-            child:Destroy()
+            child:Destroy()  -- clean up
         end
-    end
-    workspace.ChildAdded:Connect(onBulletAdded)
+    end)
 
-    -- Fire loop: aim, shoot, record offset, move forward, repeat
-    while target.Parent and ship.Parent do
-        local dist = (mainBody.Position - targetPos).Magnitude
-        if dist < TARGET_DISTANCE_END then break end
-
-        -- Aim at target center
-        pcall(function()
-            ReplicatedStorage.Event:FireServer("aim", { targetPos })
-        end)
-        task.wait(0.2)
-
-        -- Reset bullet flag
-        bulletReceived = false
-        lastBulletPos = nil
-        -- Fire
-        pcall(function()
-            ReplicatedStorage.Event:FireServer("bomb", { true })
-        end)
-
-        -- Wait for bullet to appear (max 1 second)
-        local waited = 0
-        while not bulletReceived and waited < 1.0 do
-            task.wait(0.1)
-            waited = waited + 0.1
+    -- Fire loop
+    local lastFireTime = 0
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        if not ship.Parent then
+            conn:Disconnect()
+            bulletConn:Disconnect()
+            target:Destroy()
+            print("[Diag] Ship destroyed – stopping.")
+            return
         end
 
-        if bulletReceived and lastBulletPos then
-            local yOffset = lastBulletPos.Y - targetPos.Y
-            local horizontalDist = (Vector3.new(lastBulletPos.X, 0, lastBulletPos.Z) - Vector3.new(targetPos.X, 0, targetPos.Z)).Magnitude
-            print(string.format("Dist: %6.1f | Y-offset: %6.1f | Horizontal offset: %6.1f",
-                dist, yOffset, horizontalDist))
-        else
-            print("Dist: " .. dist .. " | (no bullet detected)")
+        local now = tick()
+        if now - lastFireTime >= FIRE_INTERVAL then
+            -- Aim at target
+            pcall(function()
+                ReplicatedStorage.Event:FireServer("aim", { targetPos })
+            end)
+            task.wait(0.2)
+
+            -- Reset bullet flag, fire
+            bulletReceived = false
+            lastBulletPos = nil
+            pcall(function()
+                ReplicatedStorage.Event:FireServer("bomb", { true })
+            end)
+            lastFireTime = now
+
+            -- Wait a moment for bullet to appear
+            task.wait(0.5)
+
+            -- Log
+            local dist = (mainBody.Position - targetPos).Magnitude
+            if bulletReceived and lastBulletPos then
+                local yOffset = lastBulletPos.Y - targetPos.Y
+                local hOffset = (Vector3.new(lastBulletPos.X, 0, lastBulletPos.Z) - Vector3.new(targetPos.X, 0, targetPos.Z)).Magnitude
+                print(string.format("Dist: %6.1f | Y-offset: %6.1f | H-offset: %6.1f", dist, yOffset, hOffset))
+            else
+                print(string.format("Dist: %6.1f | (no bullet detected)", dist))
+            end
         end
-
-        -- Move ship forward by MOVE_STEP
-        local newForwardPos = mainBody.Position + mainBody.CFrame.LookVector * MOVE_STEP
-        -- We'll just set the target as the new position to move to, but we need to wait until we reach it.
-        -- Simpler: just warp the ship forward? No, we want smooth measurement while moving.
-        -- We'll use the moveShipTowardTarget function but we need it to move by a step, not continuously.
-        -- Let's just teleport the ship forward by MOVE_STEP (preserving orientation) for quick test.
-        mainBody.CFrame = mainBody.CFrame + mainBody.CFrame.LookVector * MOVE_STEP
-        -- Also move the target? No, target stays fixed.
-        task.wait(1.0)  -- let physics settle
-    end
-
-    print("[Diagnostic] Measurements complete. Target removed.")
-    target:Destroy()
+    end)
 end
 
 -- ---------- Entry ----------
 local function start()
-    print("[Diagnostic] Finding ship...")
+    print("[Diag] Looking for ship...")
     local ship = findMyShip()
     if not ship then warn("No ship found"); return end
     if not seatInShip(ship) then return end
-    task.wait(0.5)
-    disableNativeControl()
+    task.wait(1)
     runDiagnostic(ship)
+    print("[Diag] Running. Drive toward the green target. Data will appear here.")
 end
 
 start()
