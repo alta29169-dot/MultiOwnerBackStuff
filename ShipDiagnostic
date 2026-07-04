@@ -1,5 +1,5 @@
 -- ============================================================
---  AimDiag_HugeTarget.lua
+--  AimDiag_HugeTarget.lua w2
 --  Target: 1000x1000x1000 studs, 1800 studs ahead, 300 above.
 --  Bullet tracking: safe destroy, no errors.
 --  Drive closer manually; script logs Y‑offset vs distance.
