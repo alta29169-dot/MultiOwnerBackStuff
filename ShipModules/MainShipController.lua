@@ -1,20 +1,27 @@
 -- MainShipController.lua
 local RunService = game:GetService("RunService")
-local Scanner = _G._Modules.ShipScanner
-local Mover   = _G._Modules.ShipMover
-local Combat  = _G._Modules.ShipCombat
-local Config  = _G._Modules.ShipConfig
 
--- Hardcoded waypoint – later you can replace with MasterControl
+local MainCtrl = {}
+local Scanner = nil
+local Mover = nil
+local Combat = nil
+local Config = nil
+
 local WAYPOINT = Vector3.new(1000, 0, 1000)
 
-local function start()
+function MainCtrl.start()
+    -- Lazy-load module references after init
+    Scanner = _G._Modules.ShipScanner
+    Mover   = _G._Modules.ShipMover
+    Combat  = _G._Modules.ShipCombat
+    Config  = _G._Modules.ShipConfig
+
     print("[ShipCtrl] Looking for ship...")
     local ship = Scanner.findMyShip()
     if not ship then
         warn("[ShipCtrl] No ship found – retrying in 3s...")
         task.wait(3)
-        start()
+        MainCtrl.start()
         return
     end
 
@@ -39,13 +46,11 @@ local function start()
             return
         end
 
-        -- Combat: engage nearest enemy
         local enemyShip = Scanner.findEnemyShip(myTeam)
         if enemyShip then
             Combat.engage(enemyShip)
         end
 
-        -- Movement to waypoint
         local arrived = Mover.navigateTo(mainBody, bodyVel, bodyAngVel, WAYPOINT)
         if arrived then
             print("[ShipCtrl] Arrived at waypoint.")
@@ -54,4 +59,4 @@ local function start()
     end)
 end
 
-start()
+return MainCtrl
