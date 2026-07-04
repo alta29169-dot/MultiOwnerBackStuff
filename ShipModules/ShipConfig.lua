@@ -9,5 +9,5 @@ return {
 
     -- Combat prediction
     BULLET_SPEED = 600,          -- you need to measure this! (see below)
-    AIM_FACTOR = 0.055,          -- Y-offset factor from your test
+    AIM_FACTOR = 0.05,          -- Y-offset factor from your test
 }
