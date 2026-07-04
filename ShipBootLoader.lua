@@ -1,8 +1,8 @@
--- ShipBootLoader.lua
+-- ShipBootLoader.lua 2
 local GITHUB_USER = "alta29169-dot"
 local GITHUB_REPO = "MultiOwnerBackStuff"
 local GITHUB_BRANCH = "main"
-local MODULES_PATH = "ShipModules"   -- folder inside your repo
+local MODULES_PATH = "ShipModules"
 
 local MODULE_NAMES = {
     "ShipConfig",
@@ -47,7 +47,6 @@ local function fetchModule(name, retries)
     end
 end
 
--- Load all ship modules
 print("[ShipBoot] Loading ship modules...")
 for _, name in ipairs(MODULE_NAMES) do
     local success, err = pcall(fetchModule, name, 3)
@@ -57,10 +56,9 @@ for _, name in ipairs(MODULE_NAMES) do
     end
 end
 
--- Initialise sub-modules
+-- Init sub-modules
 _G._Modules.ShipScanner.init(_G._Modules.ShipConfig)
 _G._Modules.ShipMover.init(_G._Modules.ShipConfig)
 _G._Modules.ShipCombat.init(_G._Modules.ShipConfig)
 
--- The MainShipController starts automatically (it calls start() at the bottom)
 print("[ShipBoot] All ship modules loaded. Controller starting...")
