@@ -1,8 +1,7 @@
 -- ============================================================
---  AimDiag_HugeTarget.lua w2
---  Target: 1000x1000x1000 studs, 1800 studs ahead, 300 above.
---  Bullet tracking: safe destroy, no errors.
---  Drive closer manually; script logs Y‑offset vs distance.
+--  AimDiag_HugeTarget_Fix.lua
+--  Target: 1000x1000x1000, 1800 ahead, 300 above.
+--  Bullets are NOT destroyed – we only log their position.
 -- ============================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -48,12 +47,11 @@ local function createTarget(shipMainBody)
     target.Name = "AimTarget"
     target.Anchored = true
     target.CanCollide = false
-    target.Size = Vector3.new(1000, 1000, 1000)   -- massive
+    target.Size = Vector3.new(1000, 1000, 1000)
     target.BrickColor = BrickColor.new("Lime green")
-    target.Transparency = 0.5   -- see‑through so you can still navigate
+    target.Transparency = 0.5
     target.Parent = workspace
 
-    -- Place far ahead, above the water
     local forwardPos = shipMainBody.Position + shipMainBody.CFrame.LookVector * TARGET_DISTANCE
     target.Position = Vector3.new(forwardPos.X, shipMainBody.Position.Y + TARGET_Y_OFFSET, forwardPos.Z)
     return target
@@ -68,21 +66,19 @@ local function runDiagnostic(ship)
     local targetPos = target.Position
     print("[Diag] Huge target placed at:", targetPos)
 
-    -- Remove AlignOrientation (harmless, helps aim)
+    -- Remove AlignOrientation
     local align = mainBody:FindFirstChild("AlignOrientation")
     if align then align:Destroy() end
 
-    -- Bullet tracking (safe destroy)
+    -- Bullet tracking (do NOT destroy the bullet)
     local lastBulletPos = nil
     local bulletReceived = false
     local bulletConn
     bulletConn = workspace.ChildAdded:Connect(function(child)
         if child.Name == "bullet" and child:IsA("BasePart") then
-            -- Store position immediately
             lastBulletPos = child.Position
             bulletReceived = true
-            -- Safely try to destroy it; game may have already removed it
-            pcall(function() child:Destroy() end)
+            -- No destruction – game will clean it up
         end
     end)
 
@@ -112,7 +108,7 @@ local function runDiagnostic(ship)
             end)
             lastFireTime = now
 
-            task.wait(0.8)  -- longer wait for bullet to reach target
+            task.wait(0.8)  -- let bullet reach
 
             local dist = (mainBody.Position - targetPos).Magnitude
             if bulletReceived and lastBulletPos then
