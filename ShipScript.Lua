@@ -1,25 +1,28 @@
 -- ============================================================
---  ShipMove_Final.lua
---  Destroys the native "Control" LocalScript that fights
---  BodyMovers, then moves the ship smoothly to a target.
+--  ShipMove_Final.lua  (with auto‑aim & auto‑fire)
+--  Destroys the native "Control" LocalScript, moves the ship
+--  to a target, and engages enemy ships along the way.
 -- ============================================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local SHIP_TYPES = { "Destroyer", "Cruiser", "Heavy Cruiser" }
-local TARGET_POS = Vector3.new(1000, 0, 1000)   -- change to any world position
+local TARGET_POS = Vector3.new(1000, 0, 1000)   -- movement waypoint
 
 local FORWARD_SPEED = 43
 local TURN_SPEED_RAD = 0.30
 local STOP_DISTANCE = 50
+
+-- Combat settings
+local BOMB_COOLDOWN = 2.0          -- seconds between shots
+local lastBombTime = 0
 
 -- ---------- Remove the native control script ----------
 local function disableNativeControl()
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if not backpack then return end
 
-    -- Kill existing copies
     for _, child in ipairs(backpack:GetChildren()) do
         if child.Name == "Control" and child:IsA("LocalScript") then
             child:Destroy()
@@ -27,7 +30,6 @@ local function disableNativeControl()
         end
     end
 
-    -- Watch for the game cloning a new one (e.g. on re‑seat)
     backpack.ChildAdded:Connect(function(child)
         if child.Name == "Control" and child:IsA("LocalScript") then
             child:Destroy()
@@ -51,6 +53,33 @@ local function findMyShip()
     return nil
 end
 
+-- ---------- Find nearest enemy ship ----------
+local function findEnemyShip(myTeam)
+    local bestDist = math.huge
+    local bestShip = nil
+
+    for _, shipType in ipairs(SHIP_TYPES) do
+        for _, ship in ipairs(workspace:GetChildren()) do
+            if ship:IsA("Model") and ship.Name == shipType then
+                local teamVal = ship:FindFirstChild("Team")
+                if teamVal and teamVal:IsA("StringValue") then
+                    if teamVal.Value ~= myTeam then
+                        local mainBody = ship:FindFirstChild("MainBody")
+                        if mainBody then
+                            local dist = (mainBody.Position - (LocalPlayer.Character and LocalPlayer.Character.HumanoidRootPart and LocalPlayer.Character.HumanoidRootPart.Position or Vector3.zero)).Magnitude
+                            if dist < bestDist then
+                                bestDist = dist
+                                bestShip = ship
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestShip
+end
+
 -- ---------- Seat ----------
 local function seatInShip(ship)
     local seat = ship:FindFirstChild("Seat")
@@ -65,12 +94,12 @@ local function seatInShip(ship)
     return true
 end
 
--- ---------- Movement ----------
-local function moveToTarget(ship)
+-- ---------- Movement + Combat ----------
+local function moveAndFight(ship)
     local mainBody = ship:FindFirstChild("MainBody")
     if not mainBody then warn("[ShipMove] MainBody not found"); return end
 
-    -- Destroy AlignOrientation so it doesn't fight us
+    -- Destroy AlignOrientation
     local align = mainBody:FindFirstChild("AlignOrientation")
     if align then align:Destroy() end
 
@@ -82,7 +111,7 @@ local function moveToTarget(ship)
         return
     end
 
-    -- CRITICAL: raise per‑axis force limits
+    -- Raise force limits
     if bodyVel:IsA("LinearVelocity") then
         bodyVel.MaxForce = 1e9
         bodyVel.MaxAxesForce = Vector3.new(1e9, 1e9, 1e9)
@@ -91,6 +120,7 @@ local function moveToTarget(ship)
     end
     bodyAngVel.MaxTorque = 1e9
 
+    local myTeam = ship:FindFirstChild("Team") and ship:FindFirstChild("Team").Value or ""
     local lastPrint = tick()
 
     local conn
@@ -98,12 +128,35 @@ local function moveToTarget(ship)
         if not ship.Parent then conn:Disconnect() return end
 
         local myPos = mainBody.Position
+
+        -- ── Combat: aim at nearest enemy and fire ──
+        local enemyShip = findEnemyShip(myTeam)
+        if enemyShip then
+            local enemyBody = enemyShip:FindFirstChild("MainBody")
+            if enemyBody then
+                -- Aim at enemy position
+                pcall(function()
+                    game:GetService("ReplicatedStorage").Event:FireServer("aim", { enemyBody.Position })
+                end)
+                -- Fire bomb if cooldown elapsed
+                local now = tick()
+                if now - lastBombTime >= BOMB_COOLDOWN then
+                    pcall(function()
+                        game:GetService("ReplicatedStorage").Event:FireServer("bomb", { true })
+                        print("[ShipMove] Fired at", enemyShip.Name)
+                    end)
+                    lastBombTime = now
+                end
+            end
+        end
+
+        -- ── Movement ──
         local toTarget = TARGET_POS - myPos
         local dist = toTarget.Magnitude
         local targetDir = toTarget.Unit
 
-        -- Stop when close enough
         if dist < STOP_DISTANCE then
+            -- Stop
             if bodyVel:IsA("LinearVelocity") then
                 bodyVel.VectorVelocity = Vector3.zero
             else
@@ -119,17 +172,12 @@ local function moveToTarget(ship)
             return
         end
 
-        -- Angle error (radians)
+        -- Angle error
         local dot = mainBody.CFrame.LookVector:Dot(targetDir)
         local angleRad = math.acos(math.clamp(dot, -1, 1))
-
-        -- Cross for turn direction
         local cross = mainBody.CFrame.LookVector:Cross(targetDir)
         local sign = (cross.Y >= 0) and 1 or -1
-
-        -- Proportional turn, capped at max turn rate
-        local turnGain = 1.5
-        local desiredTurn = sign * math.min(angleRad * turnGain, TURN_SPEED_RAD)
+        local desiredTurn = sign * math.min(angleRad * 1.5, TURN_SPEED_RAD)
 
         -- Apply turn
         if bodyAngVel:IsA("AngularVelocity") then
@@ -138,7 +186,7 @@ local function moveToTarget(ship)
             bodyAngVel.AngularVelocity = Vector3.new(0, desiredTurn, 0)
         end
 
-        -- Always move forward
+        -- Move forward
         local forwardDir = mainBody.CFrame.LookVector
         if bodyVel:IsA("LinearVelocity") then
             bodyVel.VectorVelocity = forwardDir * FORWARD_SPEED
@@ -165,8 +213,8 @@ local function start()
     if not ship then warn("[ShipMove] No ship found"); return end
     if not seatInShip(ship) then return end
     task.wait(0.5)
-    disableNativeControl()   -- kill the Control script
-    moveToTarget(ship)
+    disableNativeControl()
+    moveAndFight(ship)
 end
 
 start()
