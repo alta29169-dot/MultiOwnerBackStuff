@@ -48,7 +48,7 @@ function MainCtrl.start()
 
         local enemyShip = Scanner.findEnemyShip(myTeam)
         if enemyShip then
-            Combat.engage(enemyShip)
+            Combat.engage(enemyShip, mainBody)
         end
 
         local arrived = Mover.navigateTo(mainBody, bodyVel, bodyAngVel, WAYPOINT)
