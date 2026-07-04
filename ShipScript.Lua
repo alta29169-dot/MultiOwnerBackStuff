@@ -1,22 +1,19 @@
 -- ============================================================
---  ShipMove_Buttons.lua
---  Moves a ship by simulating mobile button holds via
---  ContextActionService.  Action names discovered:
---    Forward : "foward"
---    Backward: "back"
---    Turn L  : "left"
---    Turn R  : "right"
+--  ShipMove_BodyMovers_Fixed.lua
+--  Direct BodyMover control with correct force limits.
+--  Destroys AlignOrientation, sets huge MaxAxesForce,
+--  and applies smooth proportional turning + constant forward.
 -- ============================================================
 local Players = game:GetService("Players")
-local ContextActionService = game:GetService("ContextActionService")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local SHIP_TYPES = { "Destroyer", "Cruiser", "Heavy Cruiser" }
-local TARGET_POS = Vector3.new(1000, 0, 1000)   -- change to any world position
+local TARGET_POS = Vector3.new(1000, 0, 1000)   -- change me
 
+local FORWARD_SPEED = 43
+local TURN_SPEED_RAD = 0.30
 local STOP_DISTANCE = 50
-local ANGLE_THRESHOLD_DEG = 8
 
 -- ---------- Find my ship ----------
 local function findMyShip()
@@ -33,7 +30,7 @@ local function findMyShip()
     return nil
 end
 
--- ---------- Seat the player ----------
+-- ---------- Seat ----------
 local function seatInShip(ship)
     local seat = ship:FindFirstChild("Seat")
     if not seat then warn("No Seat"); return false end
@@ -46,29 +43,31 @@ local function seatInShip(ship)
     return true
 end
 
--- ---------- Button hold / release ----------
-local function holdAction(actionName)
-    if not actionName then return end
-    pcall(function()
-        ContextActionService:CallFunction(actionName, Enum.UserInputState.Begin, nil)
-    end)
-end
-
-local function releaseAction(actionName)
-    if not actionName then return end
-    pcall(function()
-        ContextActionService:CallFunction(actionName, Enum.UserInputState.End, nil)
-    end)
-end
-
--- ---------- Movement loop ----------
+-- ---------- Movement ----------
 local function moveToTarget(ship)
     local mainBody = ship:FindFirstChild("MainBody")
     if not mainBody then warn("MainBody not found"); return end
 
-    -- Remove AlignOrientation so it doesn't fight turns
+    -- Destroy AlignOrientation so it doesn't fight us
     local align = mainBody:FindFirstChild("AlignOrientation")
     if align then align:Destroy() end
+
+    local bodyVel = mainBody:FindFirstChild("BodyVelocity") or mainBody:FindFirstChildWhichIsA("LinearVelocity")
+    local bodyAngVel = mainBody:FindFirstChild("BodyAngularVelocity") or mainBody:FindFirstChildWhichIsA("AngularVelocity")
+
+    if not bodyVel or not bodyAngVel then
+        warn("Missing BodyVelocity or BodyAngularVelocity")
+        return
+    end
+
+    -- CRITICAL: raise per‑axis force limits to avoid the 0‑speed drops
+    if bodyVel:IsA("LinearVelocity") then
+        bodyVel.MaxForce = 1e9
+        bodyVel.MaxAxesForce = Vector3.new(1e9, 1e9, 1e9)
+    else
+        bodyVel.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+    end
+    bodyAngVel.MaxTorque = 1e9
 
     local lastPrint = tick()
 
@@ -79,46 +78,59 @@ local function moveToTarget(ship)
         local myPos = mainBody.Position
         local toTarget = TARGET_POS - myPos
         local dist = toTarget.Magnitude
+        local targetDir = toTarget.Unit
 
+        -- Stop when close enough
         if dist < STOP_DISTANCE then
-            releaseAction("foward")
-            releaseAction("left")
-            releaseAction("right")
+            if bodyVel:IsA("LinearVelocity") then
+                bodyVel.VectorVelocity = Vector3.zero
+            else
+                bodyVel.Velocity = Vector3.zero
+            end
+            if bodyAngVel:IsA("AngularVelocity") then
+                bodyAngVel.AngularVelocity = Vector3.zero
+            else
+                bodyAngVel.AngularVelocity = Vector3.zero
+            end
             print("[ShipMove] Reached target.")
             conn:Disconnect()
             return
         end
 
-        local targetDir = toTarget.Unit
+        -- Angle error (radians)
         local dot = mainBody.CFrame.LookVector:Dot(targetDir)
-        local angleDeg = math.deg(math.acos(math.clamp(dot, -1, 1)))
+        local angleRad = math.acos(math.clamp(dot, -1, 1))
 
+        -- Cross for turn direction
         local cross = mainBody.CFrame.LookVector:Cross(targetDir)
-        local needTurnLeft = (cross.Y > 0)
+        local sign = (cross.Y >= 0) and 1 or -1
 
-        if angleDeg > ANGLE_THRESHOLD_DEG then
-            -- Rotate toward target – release forward, hold turn
-            releaseAction("foward")
-            if needTurnLeft then
-                holdAction("left")
-                releaseAction("right")
-            else
-                holdAction("right")
-                releaseAction("left")
-            end
+        -- Proportional turn, capped at max turn rate
+        local turnGain = 1.5   -- increase for sharper turns
+        local desiredTurn = sign * math.min(angleRad * turnGain, TURN_SPEED_RAD)
+
+        -- Apply turn
+        if bodyAngVel:IsA("AngularVelocity") then
+            bodyAngVel.AngularVelocity = Vector3.new(0, desiredTurn, 0)
         else
-            -- Facing target – hold forward, release turns
-            releaseAction("left")
-            releaseAction("right")
-            holdAction("foward")
+            bodyAngVel.AngularVelocity = Vector3.new(0, desiredTurn, 0)
+        end
+
+        -- Always move forward at full speed
+        local forwardDir = mainBody.CFrame.LookVector
+        if bodyVel:IsA("LinearVelocity") then
+            bodyVel.VectorVelocity = forwardDir * FORWARD_SPEED
+        else
+            bodyVel.Velocity = forwardDir * FORWARD_SPEED
         end
 
         -- Debug every second
         local now = tick()
         if now - lastPrint > 1.0 then
             local speed = mainBody.AssemblyLinearVelocity.Magnitude
-            print(string.format("[ShipMove] Dist: %.0f  Angle: %.1f°  Speed: %.1f",
-                dist, angleDeg, speed))
+            local turnRate = bodyAngVel.AngularVelocity.Y
+            print(string.format("[ShipMove] Dist: %.0f  Angle: %.1f°  Speed: %.1f  Turn: %.2f rad/s",
+                dist, math.deg(angleRad), speed, turnRate))
             lastPrint = now
         end
     end)
@@ -131,7 +143,6 @@ local function start()
     if not ship then warn("No ship found"); return end
     if not seatInShip(ship) then return end
     task.wait(1)
-
     moveToTarget(ship)
 end
 
