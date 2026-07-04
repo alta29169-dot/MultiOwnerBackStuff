@@ -1,5 +1,5 @@
 -- ============================================================
---  ShipMoveTest.lua 2
+--  ShipMoveTest.lua 3
 --  Rotates toward a target, then moves forward at 43 studs/s.
 -- ============================================================
 local Players = game:GetService("Players")
@@ -52,8 +52,7 @@ local function disableAlign(mainBody)
     end
 end
 
--- ---------- Movement loop ----------
--- ---------- Movement loop ----------
+-- ---------- Smooth movement loop ----------
 local function moveToTarget(ship)
     local mainBody = ship:FindFirstChild("MainBody")
     if not mainBody then warn("MainBody not found"); return end
@@ -68,6 +67,7 @@ local function moveToTarget(ship)
         return
     end
 
+    -- Helpers
     local function setForward(speed)
         local dir = mainBody.CFrame.LookVector
         if bodyVel:IsA("LinearVelocity") then
@@ -95,14 +95,6 @@ local function moveToTarget(ship)
         bodyAngVel.MaxTorque = 1e9
     end
 
-    local function stopTurning()
-        if bodyAngVel:IsA("AngularVelocity") then
-            bodyAngVel.AngularVelocity = Vector3.zero
-        else
-            bodyAngVel.AngularVelocity = Vector3.zero
-        end
-    end
-
     local lastPrint = tick()
 
     local conn
@@ -117,38 +109,42 @@ local function moveToTarget(ship)
         -- Stop if close enough
         if dist < STOP_DISTANCE then
             stopMovement()
-            stopTurning()
+            setTurn(0)
             print("[ShipMove] Reached target.")
             conn:Disconnect()
             return
         end
 
+        -- Angle error in radians
         local dot = mainBody.CFrame.LookVector:Dot(targetDir)
-        local angleDeg = math.deg(math.acos(math.clamp(dot, -1, 1)))
+        local angleRad = math.acos(math.clamp(dot, -1, 1))
 
-        if angleDeg > ANGLE_THRESHOLD_DEG then
-            local cross = mainBody.CFrame.LookVector:Cross(targetDir)
-            local sign = (cross.Y >= 0) and 1 or -1
-            setTurn(sign * TURN_SPEED_RAD)
-            stopMovement()
-        else
-            stopTurning()
-            setForward(FORWARD_SPEED)
-        end
+        -- Cross product to get sign (Y axis rotation)
+        local cross = mainBody.CFrame.LookVector:Cross(targetDir)
+        local sign = (cross.Y >= 0) and 1 or -1
 
-        -- Speed checker: print once per second
+        -- Proportional turn: larger error → faster turn, capped at max
+        local turnGain = 1.5   -- increase for snappier turning
+        local desiredTurn = sign * math.min(angleRad * turnGain, TURN_SPEED_RAD)
+
+        setTurn(desiredTurn)
+
+        -- Always move forward (no toggling)
+        setForward(FORWARD_SPEED)
+
+        -- Speed checker (once per second)
         local now = tick()
         if now - lastPrint > 1.0 then
             local actualSpeed = mainBody.AssemblyLinearVelocity.Magnitude
             local actualTurn = bodyAngVel:IsA("AngularVelocity")
                 and bodyAngVel.AngularVelocity.Y or 0
-            print(string.format("[ShipMove] Speed: %.1f studs/s | Turn: %.2f rad/s",
-                actualSpeed, actualTurn))
+            print(string.format("[ShipMove] Speed: %.1f studs/s | Turn: %.2f rad/s | Angle: %.1f deg",
+                actualSpeed, actualTurn, math.deg(angleRad)))
             lastPrint = now
         end
     end)
 
-    print("[ShipMove] Moving to", TARGET_POS)
+    print("[ShipMove] Smooth movement to", TARGET_POS)
 end
 
 -- ---------- Entry ----------
