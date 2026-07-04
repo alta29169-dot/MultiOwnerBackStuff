@@ -1,5 +1,5 @@
 -- ============================================================
---  AimDiag_Passive_High.lua
+--  AimDiag_Passive_High.lua 2
 --  Target is placed 300 studs ABOVE your ship to avoid ocean floor.
 --  You drive closer manually; the script aims, fires, and logs.
 -- ============================================================
@@ -52,7 +52,7 @@ local function createTarget(shipMainBody)
     target.Parent = workspace
 
     -- Place 800 studs ahead, 300 studs above ship's current Y
-    local forwardPos = shipMainBody.Position + shipMainBody.CFrame.LookVector * 800
+    local forwardPos = shipMainBody.Position + shipMainBody.CFrame.LookVector * 1750
     target.Position = Vector3.new(forwardPos.X, shipMainBody.Position.Y + TARGET_Y_OFFSET, forwardPos.Z)
     return target
 end
