@@ -1,0 +1,57 @@
+-- MainShipController.lua
+local RunService = game:GetService("RunService")
+local Scanner = _G._Modules.ShipScanner
+local Mover   = _G._Modules.ShipMover
+local Combat  = _G._Modules.ShipCombat
+local Config  = _G._Modules.ShipConfig
+
+-- Hardcoded waypoint – later you can replace with MasterControl
+local WAYPOINT = Vector3.new(1000, 0, 1000)
+
+local function start()
+    print("[ShipCtrl] Looking for ship...")
+    local ship = Scanner.findMyShip()
+    if not ship then
+        warn("[ShipCtrl] No ship found – retrying in 3s...")
+        task.wait(3)
+        start()
+        return
+    end
+
+    if not Scanner.seatInShip(ship) then
+        warn("[ShipCtrl] Could not seat")
+        return
+    end
+
+    task.wait(0.5)
+    Mover.disableNativeControl()
+
+    local mainBody, bodyVel, bodyAngVel = Mover.prepareBodyMovers(ship)
+    if not mainBody then return end
+
+    local myTeam = (ship:FindFirstChild("Team") and ship:FindFirstChild("Team").Value) or ""
+
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        if not ship.Parent then
+            conn:Disconnect()
+            print("[ShipCtrl] Ship destroyed.")
+            return
+        end
+
+        -- Combat: engage nearest enemy
+        local enemyShip = Scanner.findEnemyShip(myTeam)
+        if enemyShip then
+            Combat.engage(enemyShip)
+        end
+
+        -- Movement to waypoint
+        local arrived = Mover.navigateTo(mainBody, bodyVel, bodyAngVel, WAYPOINT)
+        if arrived then
+            print("[ShipCtrl] Arrived at waypoint.")
+            conn:Disconnect()
+        end
+    end)
+end
+
+start()
