@@ -1,7 +1,8 @@
 -- ============================================================
---  AimTuner.lua
---  GUI with a Y‑offset box.  Shoot nearest enemy every 4s.
---  Logs distance + offset used.  Tune until you see hits.
+--  AimFactorTuner.lua w22
+--  GUI with a "Factor" input.  Fires at nearest enemy every 4s.
+--  Uses: aimPos = enemyBody.Position + Vector3(0, factor * dist, 0)
+--  Logs distance, factor, and the resulting Y‑offset.
 -- ============================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,24 +10,24 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local SHIP_TYPES = { "Destroyer", "Cruiser", "Heavy Cruiser" }
-local FIRE_INTERVAL = 4   -- seconds
+local FIRE_INTERVAL = 4   -- seconds between shots
 
 -- ---------- GUI ----------
 local function createGui()
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "AimTunerGui"
+    screenGui.Name = "AimFactorTunerGui"
     screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 180, 0, 60)
+    frame.Size = UDim2.new(0, 200, 0, 60)
     frame.Position = UDim2.new(0, 20, 0, 20)
     frame.BackgroundColor3 = Color3.new(0, 0, 0)
     frame.BackgroundTransparency = 0.5
     frame.Parent = screenGui
 
     local label = Instance.new("TextLabel")
-    label.Text = "Y Offset:"
-    label.Size = UDim2.new(0, 60, 0, 20)
+    label.Text = "Factor (e.g. 0.055):"
+    label.Size = UDim2.new(0, 100, 0, 20)
     label.Position = UDim2.new(0, 5, 0, 5)
     label.BackgroundTransparency = 1
     label.TextColor3 = Color3.new(1, 1, 1)
@@ -34,27 +35,27 @@ local function createGui()
     label.TextSize = 14
     label.Parent = frame
 
-    local textBox = Instance.new("TextBox")
-    textBox.Size = UDim2.new(0, 80, 0, 20)
-    textBox.Position = UDim2.new(0, 70, 0, 5)
-    textBox.Text = "0"
-    textBox.BackgroundColor3 = Color3.new(0.3, 0.3, 0.3)
-    textBox.TextColor3 = Color3.new(1, 1, 1)
-    textBox.Font = Enum.Font.SourceSans
-    textBox.TextSize = 14
-    textBox.Parent = frame
+    local factorBox = Instance.new("TextBox")
+    factorBox.Size = UDim2.new(0, 70, 0, 20)
+    factorBox.Position = UDim2.new(0, 110, 0, 5)
+    factorBox.Text = "0.055"   -- default based on 100/1800
+    factorBox.BackgroundColor3 = Color3.new(0.3, 0.3, 0.3)
+    factorBox.TextColor3 = Color3.new(1, 1, 1)
+    factorBox.Font = Enum.Font.SourceSans
+    factorBox.TextSize = 14
+    factorBox.Parent = frame
 
-    local infoLabel = Instance.new("TextLabel")
-    infoLabel.Text = "Aim at nearest enemy every 4s"
-    infoLabel.Size = UDim2.new(0, 170, 0, 20)
-    infoLabel.Position = UDim2.new(0, 5, 0, 30)
-    infoLabel.BackgroundTransparency = 1
-    infoLabel.TextColor3 = Color3.new(0.8, 0.8, 0.8)
-    infoLabel.Font = Enum.Font.SourceSans
-    infoLabel.TextSize = 12
-    infoLabel.Parent = frame
+    local info = Instance.new("TextLabel")
+    info.Text = "Aim at nearest enemy every 4s"
+    info.Size = UDim2.new(0, 180, 0, 20)
+    info.Position = UDim2.new(0, 5, 0, 30)
+    info.BackgroundTransparency = 1
+    info.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+    info.Font = Enum.Font.SourceSans
+    info.TextSize = 12
+    info.Parent = frame
 
-    return textBox
+    return factorBox
 end
 
 -- ---------- Find my ship ----------
@@ -113,13 +114,13 @@ end
 
 -- ---------- Main ----------
 local function start()
-    print("[AimTuner] Looking for ship...")
+    print("[AimFactorTuner] Looking for ship...")
     local ship = findMyShip()
     if not ship then warn("No ship found"); return end
     if not seatInShip(ship) then return end
     task.wait(0.5)
 
-    local offsetBox = createGui()
+    local factorBox = createGui()
     local myTeam = (ship:FindFirstChild("Team") and ship:FindFirstChild("Team").Value) or ""
     local lastFireTime = 0
 
@@ -127,7 +128,7 @@ local function start()
     conn = RunService.Heartbeat:Connect(function()
         if not ship.Parent then
             conn:Disconnect()
-            print("[AimTuner] Ship destroyed.")
+            print("[AimFactorTuner] Ship destroyed.")
             return
         end
 
@@ -137,8 +138,16 @@ local function start()
             if enemyShip then
                 local enemyBody = enemyShip:FindFirstChild("MainBody")
                 if enemyBody then
-                    local offset = tonumber(offsetBox.Text) or 0
-                    local aimPos = enemyBody.Position + Vector3.new(0, offset, 0)
+                    -- Distance to enemy
+                    local myPos = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                                  and LocalPlayer.Character.HumanoidRootPart.Position or Vector3.zero
+                    local dist = (enemyBody.Position - myPos).Magnitude
+
+                    -- Factor from GUI
+                    local factor = tonumber(factorBox.Text) or 0
+                    local yOffset = factor * dist
+
+                    local aimPos = enemyBody.Position + Vector3.new(0, yOffset, 0)
 
                     pcall(function()
                         ReplicatedStorage.Event:FireServer("aim", { aimPos })
@@ -148,13 +157,11 @@ local function start()
                         ReplicatedStorage.Event:FireServer("bomb", { true })
                     end)
 
-                    local dist = (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                                  and LocalPlayer.Character.HumanoidRootPart.Position or Vector3.zero - enemyBody.Position).Magnitude
-                    print(string.format("Fired at %s | Dist: %.0f | Y-offset: %.0f", enemyShip.Name, dist, offset))
+                    print(string.format("Fired at %s | Dist: %.0f | Factor: %.4f | Y-offset: %.1f",
+                        enemyShip.Name, dist, factor, yOffset))
                     lastFireTime = now
                 end
             else
-                -- No enemy, wait a bit longer to avoid spam
                 task.wait(2)
                 lastFireTime = tick()
             end
