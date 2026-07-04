@@ -1,21 +1,24 @@
 -- ============================================================
---  ShipMoveTest.lua 3
---  Rotates toward a target, then moves forward at 43 studs/s.
+--  ShipMove_ContextAction.lua
+--  Controls the ship by simulating mobile button presses
+--  through ContextActionService.  No BodyMover fights.
 -- ============================================================
+
 local Players = game:GetService("Players")
+local ContextActionService = game:GetService("ContextActionService")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local SHIP_TYPES = { "Destroyer", "Cruiser", "Heavy Cruiser" }
-local TARGET_POS = Vector3.new(1000, 0, 1000)   -- change to any world position
+local TARGET_POS = Vector3.new(1000, 0, 1000)   -- change to whatever you like
 
--- Real measured constants
-local TURN_SPEED_RAD = 0.30          -- rad/s
-local FORWARD_SPEED = 43             -- studs/s
-local STOP_DISTANCE = 50             -- studs from target
-local ANGLE_THRESHOLD_DEG = 5        -- how close before moving
+-- Real ship constants (from your measurements)
+local FORWARD_SPEED = 43      -- studs/s (not used directly, just for reference)
+local TURN_RATE = 0.30        -- rad/s (not used directly, just for reference)
+local STOP_DISTANCE = 50      -- studs
+local ANGLE_THRESHOLD_DEG = 8 -- how close we aim before moving forward
 
--- ---------- Find my ship ----------
+-- ---------- Find my ship (Owner match) ----------
 local function findMyShip()
     for _, shipType in ipairs(SHIP_TYPES) do
         for _, ship in ipairs(workspace:GetChildren()) do
@@ -43,57 +46,101 @@ local function seatInShip(ship)
     return true
 end
 
--- ---------- Remove AlignOrientation ----------
-local function disableAlign(mainBody)
-    local align = mainBody:FindFirstChild("AlignOrientation")
-    if align then
-        align:Destroy()
-        print("[ShipMove] AlignOrientation removed")
+-- ---------- Map action names by direction ----------
+-- We'll find the ContextActionService actions that the buttons trigger.
+-- The ActionTitle Text tells us the direction: "^", "v", "<", ">"
+-- but the actual action name is a string like "Forward" or "MoveForward".
+-- We'll scan all bindings and match them to the button text.
+
+local ACTION_FORWARD = nil
+local ACTION_BACKWARD = nil
+local ACTION_TURNLEFT = nil
+local ACTION_TURNRIGHT = nil
+
+local function discoverActions()
+    -- Get all bound action names
+    local actions = ContextActionService:GetAllActions()
+    if not actions then return end
+
+    -- Scan the buttons to find their ActionName (or we guess)
+    local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+    local frame = playerGui:FindFirstChild("ContextActionGui")
+    if not frame then return end
+    local buttonFrame = frame:FindFirstChild("ContextButtonFrame")
+    if not buttonFrame then return end
+
+    -- Walk through the buttons and match them
+    for _, button in ipairs(buttonFrame:GetChildren()) do
+        if button:IsA("ImageButton") then
+            local titleLabel = button:FindFirstChild("ActionTitle")
+            if titleLabel and titleLabel:IsA("TextLabel") then
+                local text = titleLabel.Text  -- "^", "v", "<", ">"
+                -- The button might have an attribute or child that tells the action name
+                -- Try to find a StringValue or attribute
+                local actionName = button:GetAttribute("ActionName") or button.Name
+                -- Or search for a child like "Action" that holds the action name
+                local actionObj = button:FindFirstChild("Action") or button:FindFirstChild("ActionName")
+                if actionObj and actionObj:IsA("StringValue") then
+                    actionName = actionObj.Value
+                end
+                -- If still nil, we'll infer from text later
+                if text == "^" and (not ACTION_FORWARD) then
+                    ACTION_FORWARD = actionName or button.Name
+                elseif text == "v" and (not ACTION_BACKWARD) then
+                    ACTION_BACKWARD = actionName or button.Name
+                elseif text == "<" and (not ACTION_TURNLEFT) then
+                    ACTION_TURNLEFT = actionName or button.Name
+                elseif text == ">" and (not ACTION_TURNRIGHT) then
+                    ACTION_TURNRIGHT = actionName or button.Name
+                end
+            end
+        end
     end
 end
 
--- ---------- Smooth movement loop ----------
+-- Fallback: if discovery didn't work, we'll assume common action names
+local function setFallbackActions()
+    if not ACTION_FORWARD then ACTION_FORWARD = "Forward" end
+    if not ACTION_BACKWARD then ACTION_BACKWARD = "Backward" end
+    if not ACTION_TURNLEFT then ACTION_TURNLEFT = "TurnLeft" end
+    if not ACTION_TURNRIGHT then ACTION_TURNRIGHT = "TurnRight" end
+end
+
+-- ---------- Simulate holding a context action ----------
+-- ContextActionService fires functions with (actionName, inputState, inputObject)
+-- inputState can be Enum.UserInputState.Begin, .Change, .End
+-- To hold, we fire Begin once, then repeated Change? Actually the service expects
+-- continuous holding to be handled by the function itself. Usually the function
+-- checks if state == Enum.UserInputState.Begin to start, and End to stop.
+-- But we can simply call the bound function directly with a fake input object.
+-- That's risky. The safest way is to use `ContextActionService:CallFunction(actionName, state, nil)`
+-- which triggers the function bound to that action with the given state.
+-- We'll start with Begin to press, and End to release.
+
+local function holdAction(actionName)
+    if not actionName then return end
+    pcall(function()
+        ContextActionService:CallFunction(actionName, Enum.UserInputState.Begin, nil)
+    end)
+end
+
+local function releaseAction(actionName)
+    if not actionName then return end
+    pcall(function()
+        ContextActionService:CallFunction(actionName, Enum.UserInputState.End, nil)
+    end)
+end
+
+-- ---------- Movement loop ----------
 local function moveToTarget(ship)
     local mainBody = ship:FindFirstChild("MainBody")
     if not mainBody then warn("MainBody not found"); return end
 
-    disableAlign(mainBody)
+    -- Remove AlignOrientation if present (may interfere)
+    local align = mainBody:FindFirstChild("AlignOrientation")
+    if align then align:Destroy() end
 
-    local bodyVel = mainBody:FindFirstChild("BodyVelocity") or mainBody:FindFirstChildWhichIsA("LinearVelocity")
-    local bodyAngVel = mainBody:FindFirstChild("BodyAngularVelocity") or mainBody:FindFirstChildWhichIsA("AngularVelocity")
-
-    if not bodyVel or not bodyAngVel then
-        warn("Missing BodyMovers")
-        return
-    end
-
-    -- Helpers
-    local function setForward(speed)
-        local dir = mainBody.CFrame.LookVector
-        if bodyVel:IsA("LinearVelocity") then
-            bodyVel.VectorVelocity = dir * speed
-        else
-            bodyVel.Velocity = dir * speed
-        end
-        bodyVel.MaxForce = 1e9
-    end
-
-    local function stopMovement()
-        if bodyVel:IsA("LinearVelocity") then
-            bodyVel.VectorVelocity = Vector3.zero
-        else
-            bodyVel.Velocity = Vector3.zero
-        end
-    end
-
-    local function setTurn(radPerSec)
-        if bodyAngVel:IsA("AngularVelocity") then
-            bodyAngVel.AngularVelocity = Vector3.new(0, radPerSec, 0)
-        else
-            bodyAngVel.AngularVelocity = Vector3.new(0, radPerSec, 0)
-        end
-        bodyAngVel.MaxTorque = 1e9
-    end
+    print("[ShipMove] Actions: Fwd=", ACTION_FORWARD, "Bwd=", ACTION_BACKWARD, "L=", ACTION_TURNLEFT, "R=", ACTION_TURNRIGHT)
 
     local lastPrint = tick()
 
@@ -104,47 +151,51 @@ local function moveToTarget(ship)
         local myPos = mainBody.Position
         local toTarget = TARGET_POS - myPos
         local dist = toTarget.Magnitude
-        local targetDir = toTarget.Unit
-
-        -- Stop if close enough
         if dist < STOP_DISTANCE then
-            stopMovement()
-            setTurn(0)
+            -- Release all actions
+            releaseAction(ACTION_FORWARD)
+            releaseAction(ACTION_TURNLEFT)
+            releaseAction(ACTION_TURNRIGHT)
             print("[ShipMove] Reached target.")
             conn:Disconnect()
             return
         end
 
-        -- Angle error in radians
+        local targetDir = toTarget.Unit
         local dot = mainBody.CFrame.LookVector:Dot(targetDir)
-        local angleRad = math.acos(math.clamp(dot, -1, 1))
+        local angleDeg = math.deg(math.acos(math.clamp(dot, -1, 1)))
 
-        -- Cross product to get sign (Y axis rotation)
+        -- Determine turn direction
         local cross = mainBody.CFrame.LookVector:Cross(targetDir)
-        local sign = (cross.Y >= 0) and 1 or -1
+        local needTurnLeft = (cross.Y > 0)   -- if cross.Y positive, turning left reduces angle
 
-        -- Proportional turn: larger error → faster turn, capped at max
-        local turnGain = 1.5   -- increase for snappier turning
-        local desiredTurn = sign * math.min(angleRad * turnGain, TURN_SPEED_RAD)
+        -- If angle is large enough, we turn instead of moving forward
+        if angleDeg > ANGLE_THRESHOLD_DEG then
+            -- Release forward, hold turn
+            releaseAction(ACTION_FORWARD)
+            if needTurnLeft then
+                holdAction(ACTION_TURNLEFT)
+                releaseAction(ACTION_TURNRIGHT)
+            else
+                holdAction(ACTION_TURNRIGHT)
+                releaseAction(ACTION_TURNLEFT)
+            end
+        else
+            -- Facing roughly toward target: hold forward, release turns
+            releaseAction(ACTION_TURNLEFT)
+            releaseAction(ACTION_TURNRIGHT)
+            holdAction(ACTION_FORWARD)
+        end
 
-        setTurn(desiredTurn)
-
-        -- Always move forward (no toggling)
-        setForward(FORWARD_SPEED)
-
-        -- Speed checker (once per second)
+        -- Debug print every second
         local now = tick()
         if now - lastPrint > 1.0 then
-            local actualSpeed = mainBody.AssemblyLinearVelocity.Magnitude
-            local actualTurn = bodyAngVel:IsA("AngularVelocity")
-                and bodyAngVel.AngularVelocity.Y or 0
-            print(string.format("[ShipMove] Speed: %.1f studs/s | Turn: %.2f rad/s | Angle: %.1f deg",
-                actualSpeed, actualTurn, math.deg(angleRad)))
+            local speed = mainBody.AssemblyLinearVelocity.Magnitude
+            print(string.format("[ShipMove] Dist: %.0f  Angle: %.1f°  Speed: %.1f",
+                dist, angleDeg, speed))
             lastPrint = now
         end
     end)
-
-    print("[ShipMove] Smooth movement to", TARGET_POS)
 end
 
 -- ---------- Entry ----------
@@ -154,6 +205,11 @@ local function start()
     if not ship then warn("No ship found"); return end
     if not seatInShip(ship) then return end
     task.wait(1)
+
+    -- Discover actions from buttons
+    discoverActions()
+    setFallbackActions()   -- in case discovery missed something
+
     moveToTarget(ship)
 end
 
