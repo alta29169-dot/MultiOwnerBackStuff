@@ -1,6 +1,6 @@
 -- ShipBootLoader.lua
-local GITHUB_USER = "swiftlyrandom"
-local GITHUB_REPO = "QuurpMethod"
+local GITHUB_USER = "alta29169-dot"
+local GITHUB_REPO = "MultiOwnerBackStuff"
 local GITHUB_BRANCH = "main"
 local MODULES_PATH = "ShipModules"   -- folder inside your repo
 
