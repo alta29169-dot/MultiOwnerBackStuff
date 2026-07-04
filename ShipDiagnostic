@@ -1,7 +1,8 @@
 -- ============================================================
---  AimDiag_Passive_High.lua 2
---  Target is placed 300 studs ABOVE your ship to avoid ocean floor.
---  You drive closer manually; the script aims, fires, and logs.
+--  AimDiag_HugeTarget.lua
+--  Target: 1000x1000x1000 studs, 1800 studs ahead, 300 above.
+--  Bullet tracking: safe destroy, no errors.
+--  Drive closer manually; script logs Y‑offset vs distance.
 -- ============================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -10,7 +11,8 @@ local LocalPlayer = Players.LocalPlayer
 
 local SHIP_TYPES = { "Destroyer", "Cruiser", "Heavy Cruiser" }
 local FIRE_INTERVAL = 4          -- seconds between shots
-local TARGET_Y_OFFSET = 300      -- studs above your ship's starting Y
+local TARGET_Y_OFFSET = 300      -- studs above ship's starting Y
+local TARGET_DISTANCE = 1800     -- how far ahead the target is placed
 
 -- ---------- Find my ship ----------
 local function findMyShip()
@@ -40,19 +42,19 @@ local function seatInShip(ship)
     return true
 end
 
--- ---------- Create a high target ----------
+-- ---------- Create a huge target ----------
 local function createTarget(shipMainBody)
     local target = Instance.new("Part")
     target.Name = "AimTarget"
     target.Anchored = true
     target.CanCollide = false
-    target.Size = Vector3.new(20, 20, 20)
+    target.Size = Vector3.new(1000, 1000, 1000)   -- massive
     target.BrickColor = BrickColor.new("Lime green")
-    target.Transparency = 0.3
+    target.Transparency = 0.5   -- see‑through so you can still navigate
     target.Parent = workspace
 
-    -- Place 800 studs ahead, 300 studs above ship's current Y
-    local forwardPos = shipMainBody.Position + shipMainBody.CFrame.LookVector * 1750
+    -- Place far ahead, above the water
+    local forwardPos = shipMainBody.Position + shipMainBody.CFrame.LookVector * TARGET_DISTANCE
     target.Position = Vector3.new(forwardPos.X, shipMainBody.Position.Y + TARGET_Y_OFFSET, forwardPos.Z)
     return target
 end
@@ -64,21 +66,23 @@ local function runDiagnostic(ship)
 
     local target = createTarget(mainBody)
     local targetPos = target.Position
-    print("[Diag] Target placed HIGH at:", targetPos)
+    print("[Diag] Huge target placed at:", targetPos)
 
     -- Remove AlignOrientation (harmless, helps aim)
     local align = mainBody:FindFirstChild("AlignOrientation")
     if align then align:Destroy() end
 
-    -- Bullet tracking
+    -- Bullet tracking (safe destroy)
     local lastBulletPos = nil
     local bulletReceived = false
     local bulletConn
     bulletConn = workspace.ChildAdded:Connect(function(child)
         if child.Name == "bullet" and child:IsA("BasePart") then
+            -- Store position immediately
             lastBulletPos = child.Position
             bulletReceived = true
-            child:Destroy()
+            -- Safely try to destroy it; game may have already removed it
+            pcall(function() child:Destroy() end)
         end
     end)
 
@@ -108,7 +112,7 @@ local function runDiagnostic(ship)
             end)
             lastFireTime = now
 
-            task.wait(0.5)  -- let bullet appear
+            task.wait(0.8)  -- longer wait for bullet to reach target
 
             local dist = (mainBody.Position - targetPos).Magnitude
             if bulletReceived and lastBulletPos then
@@ -130,8 +134,8 @@ local function start()
     if not seatInShip(ship) then return end
     task.wait(1)
     runDiagnostic(ship)
-    print("[Diag] Running. A green cube is 800 studs ahead, 300 studs above you.")
-    print("[Diag] Drive toward it manually. Data will appear here every 4 seconds.")
+    print("[Diag] Running. Giant green target 1800 studs ahead, 300 above you.")
+    print("[Diag] Drive toward it manually. Logs every 4s.")
 end
 
 start()
