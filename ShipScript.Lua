@@ -1,24 +1,18 @@
 -- ============================================================
---  ShipMovementTest.lua 2
---  Finds your Destroyer / Cruiser / Heavy Cruiser, seats you,
---  then measures forward speed & turn rate.
+--  ShipMovementTest.lua 3
+--  Finds your ship, seats you, and measures real speed & turn.
 -- ============================================================
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
--- CONFIG
 local SHIP_TYPES = { "Destroyer", "Cruiser", "Heavy Cruiser" }
-local FORWARD_SPEED_TARGET = 200   -- initial speed to try (can be adjusted)
-local TURN_SPEED_TARGET   = 1.5    -- rad/s to try for turning
 
--- ---------- Find my ship ----------
+-- ---------- Find my ship (owner‑matched) ----------
 local function findMyShip()
     for _, shipType in ipairs(SHIP_TYPES) do
-        -- Get every direct child of workspace with that name
-        local ships = workspace:GetChildren()
-        for _, ship in ipairs(ships) do
+        for _, ship in ipairs(workspace:GetChildren()) do
             if ship:IsA("Model") and ship.Name == shipType then
                 local ownerVal = ship:FindFirstChild("Owner")
                 if ownerVal and ownerVal:IsA("StringValue") and ownerVal.Value == LocalPlayer.Name then
@@ -35,22 +29,20 @@ end
 local function seatInShip(ship)
     local seat = ship:FindFirstChild("Seat")
     if not seat then
-        warn("[ShipTest] No Seat found in ship")
+        warn("[ShipTest] No Seat found")
         return false
     end
-
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local hrp = char:WaitForChild("HumanoidRootPart")
     local hum = char:WaitForChild("Humanoid")
-
-    hrp.CFrame = seat.CFrame + Vector3.new(0, 2, 0)   -- slight lift
+    hrp.CFrame = seat.CFrame + Vector3.new(0, 2, 0)
     task.wait(0.3)
     seat:Sit(hum)
     print("[ShipTest] Seated in", ship.Name)
     return true
 end
 
--- ---------- Main test routine ----------
+-- ---------- Run tests ----------
 local function runTests(ship)
     local mainBody = ship:FindFirstChild("MainBody")
     if not mainBody then
@@ -58,81 +50,97 @@ local function runTests(ship)
         return
     end
 
-    local bodyVel = mainBody:FindFirstChild("BodyVelocity") or mainBody:FindFirstChildWhichIsA("LinearVelocity")
-    local bodyAngVel = mainBody:FindFirstChild("BodyAngularVelocity") or mainBody:FindFirstChildWhichIsA("AngularVelocity")
+    local bodyVel = mainBody:FindFirstChild("BodyVelocity")
+        or mainBody:FindFirstChildWhichIsA("LinearVelocity")
+    local bodyAngVel = mainBody:FindFirstChild("BodyAngularVelocity")
+        or mainBody:FindFirstChildWhichIsA("AngularVelocity")
+    local alignOrientation = mainBody:FindFirstChild("AlignOrientation")
 
     if not bodyVel or not bodyAngVel then
         warn("[ShipTest] Missing BodyVelocity or BodyAngularVelocity")
         return
     end
 
-    -- Helper: set forward speed
+    -- Temporarily remove AlignOrientation so it doesn't fight turns
+    if alignOrientation then
+        alignOrientation:Destroy()
+        print("[ShipTest] Removed AlignOrientation for testing")
+    end
+
+    -- Helper: set forward speed via BodyVelocity/LinearVelocity
     local function setForwardSpeed(speed)
         local dir = mainBody.CFrame.LookVector
-        if bodyVel:IsA("BodyVelocity") then
-            bodyVel.Velocity = dir * speed
-            bodyVel.MaxForce = Vector3.new(1e6, 1e6, 1e6)  -- plenty of force
-        elseif bodyVel:IsA("LinearVelocity") then
+        if bodyVel:IsA("LinearVelocity") then
             bodyVel.VectorVelocity = dir * speed
-            bodyVel.MaxForce = 1e6
+        else
+            bodyVel.Velocity = dir * speed
         end
+        bodyVel.MaxForce = 1e9   -- plenty of force to reach target speed
     end
 
-    -- Helper: stop movement
-    local function stopMovement()
-        if bodyVel:IsA("BodyVelocity") then
-            bodyVel.Velocity = Vector3.zero
-        elseif bodyVel:IsA("LinearVelocity") then
+    -- Helper: stop forward movement
+    local function stopForward()
+        if bodyVel:IsA("LinearVelocity") then
             bodyVel.VectorVelocity = Vector3.zero
+        else
+            bodyVel.Velocity = Vector3.zero
         end
     end
 
-    -- Helper: set turn speed
+    -- Helper: set turn speed (Y‑axis rotation)
     local function setTurnSpeed(radPerSec)
-        if bodyAngVel:IsA("BodyAngularVelocity") then
+        if bodyAngVel:IsA("AngularVelocity") then
             bodyAngVel.AngularVelocity = Vector3.new(0, radPerSec, 0)
-            bodyAngVel.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
-        elseif bodyAngVel:IsA("AngularVelocity") then
+        else
             bodyAngVel.AngularVelocity = Vector3.new(0, radPerSec, 0)
-            bodyAngVel.MaxTorque = 1e9
         end
+        bodyAngVel.MaxTorque = 1e9
     end
 
     -- Helper: stop turning
     local function stopTurning()
-        if bodyAngVel:IsA("BodyAngularVelocity") then
+        if bodyAngVel:IsA("AngularVelocity") then
             bodyAngVel.AngularVelocity = Vector3.zero
-        elseif bodyAngVel:IsA("AngularVelocity") then
+        else
             bodyAngVel.AngularVelocity = Vector3.zero
         end
     end
 
-    print("[ShipTest] === Forward Speed Test ===")
-    setForwardSpeed(FORWARD_SPEED_TARGET)
-    for i = 1, 10 do
-        task.wait(0.5)
-        local speed = mainBody.AssemblyLinearVelocity.Magnitude
-        print(string.format("[ShipTest] Forward speed: %.1f studs/s", speed))
+    -- ---------- Forward Speed Test ----------
+    print("\n[ShipTest] === Forward Speed Test ===")
+    local testSpeeds = { 20, 40, 60, 80, 100 }
+    for _, targetSpeed in ipairs(testSpeeds) do
+        setForwardSpeed(targetSpeed)
+        task.wait(1.5)   -- let the ship accelerate
+        local maxObserved = 0
+        for i = 1, 10 do
+            local speed = mainBody.AssemblyLinearVelocity.Magnitude
+            if speed > maxObserved then maxObserved = speed end
+            task.wait(0.2)
+        end
+        print(string.format("  Target: %3d studs/s  →  Max observed: %.1f studs/s", targetSpeed, maxObserved))
     end
-    stopMovement()
+    stopForward()
     task.wait(1)
 
-    print("[ShipTest] === Turn Speed Test ===")
-    setTurnSpeed(TURN_SPEED_TARGET)
-    local startYaw = mainBody.Orientation.Y
-    for i = 1, 10 do
-        task.wait(0.5)
-        local currentYaw = mainBody.Orientation.Y
-        local diff = math.abs(currentYaw - startYaw)
-        print(string.format("[ShipTest] Yaw change: %.1f deg", diff))
-        startYaw = currentYaw
+    -- ---------- Turn Rate Test ----------
+    print("\n[ShipTest] === Turn Rate Test ===")
+    local testAngles = { 0.3, 0.6, 0.9, 1.2, 1.5 }
+    for _, targetRad in ipairs(testAngles) do
+        setTurnSpeed(targetRad)
+        task.wait(0.5)   -- let rotation start
+        local startYaw = mainBody.CFrame.Orientation.Y
+        task.wait(1.0)   -- measure over 1 second
+        local endYaw = mainBody.CFrame.Orientation.Y
+        local deltaDeg = math.deg(math.abs(endYaw - startYaw))
+        print(string.format("  Target: %.1f rad/s  →  Observed: %.1f deg/s", targetRad, deltaDeg))
     end
     stopTurning()
 
-    print("[ShipTest] Tests complete. You can now control the ship manually.")
+    print("\n[ShipTest] Tests complete. Ship is now idle and ready for manual control.")
 end
 
--- ---------- Entry point ----------
+-- ---------- Entry ----------
 local function start()
     print("[ShipTest] Waiting for character...")
     while not LocalPlayer.Character do task.wait(0.5) end
@@ -143,7 +151,7 @@ local function start()
         return
     end
     if not seatInShip(ship) then return end
-    task.wait(1)   -- let the seat settle
+    task.wait(1)
     runTests(ship)
 end
 
