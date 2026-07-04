@@ -1,5 +1,5 @@
 -- ============================================================
---  ShipSpeedometer.lua
+--  ShipSpeedometer.lua  (corrected)
 --  Seats you in your ship and prints speed + turn rate live.
 -- ============================================================
 local Players = game:GetService("Players")
@@ -49,7 +49,7 @@ local function runSpeedometer(ship)
         print("[Speedometer] AlignOrientation disabled for accurate readings")
     end
 
-    local lastYaw = mainBody.CFrame.Orientation.Y
+    local lastYaw = mainBody.Orientation.Y   -- degrees
     local lastTime = tick()
 
     local conn = RunService.Heartbeat:Connect(function()
@@ -59,7 +59,6 @@ local function runSpeedometer(ship)
             return
         end
         if not (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")) then
-            -- player died or left seat
             conn:Disconnect()
             print("[Speedometer] Player left seat – stopping.")
             return
@@ -67,15 +66,15 @@ local function runSpeedometer(ship)
 
         local now = tick()
         local dt = now - lastTime
-        if dt < 0.15 then return end   -- only update ~5 times per second
+        if dt < 0.15 then return end   -- ~5 updates per second
 
         local speed = mainBody.AssemblyLinearVelocity.Magnitude
-        local currentYaw = mainBody.CFrame.Orientation.Y
+        local currentYaw = mainBody.Orientation.Y
         local deltaYaw = math.abs(currentYaw - lastYaw)
-        local turnRate = deltaYaw / dt   -- rad/s
+        local turnRateRad = math.rad(deltaYaw) / dt   -- rad/s (Orientation is in degrees)
 
         print(string.format("Speed: %6.1f studs/s | Turn: %5.2f rad/s (%5.1f deg/s)",
-            speed, turnRate, math.deg(turnRate)))
+            speed, turnRateRad, deltaYaw / dt))
 
         lastYaw = currentYaw
         lastTime = now
