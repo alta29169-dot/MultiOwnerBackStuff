@@ -61,4 +61,5 @@ _G._Modules.ShipScanner.init(_G._Modules.ShipConfig)
 _G._Modules.ShipMover.init(_G._Modules.ShipConfig)
 _G._Modules.ShipCombat.init(_G._Modules.ShipConfig)
 
-print("[ShipBoot] All ship modules loaded. Controller starting...")
+-- Start the controller
+_G._Modules.MainShipController.start()
