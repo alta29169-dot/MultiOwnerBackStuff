@@ -28,7 +28,9 @@ function Combat.engage(enemyShip)
     task.delay(1, function() marker:Destroy() end)
 
     pcall(function()
-        ReplicatedStorage.Event:FireServer("aim", { enemyBody.Position })
+        -- Aim 15 studs above the enemy's MainBody to compensate for gun height
+        local aimPos = enemyBody.Position + Vector3.new(0, 15, 0)
+        ReplicatedStorage.Event:FireServer("aim", { aimPos })
     end)
 
     local now = tick()
